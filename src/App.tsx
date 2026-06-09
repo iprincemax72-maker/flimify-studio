@@ -44,6 +44,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [online, setOnline] = useState<boolean | null>(null);
   const [status, setStatus] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const playerRef = useRef<PlayerRef>(null);
 
   // bridge health
@@ -75,6 +76,39 @@ export default function App() {
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
     });
   };
+
+  const updateClip = (trackId: string, clipId: string, patch: Partial<Clip>) => {
+    setState((s) => {
+      const tracks = s.tracks.map((t) =>
+        t.id === trackId
+          ? { ...t, clips: t.clips.map((c) => (c.id === clipId ? ({ ...c, ...patch } as Clip) : c)) }
+          : t,
+      );
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+  };
+
+  const deleteSelected = () => {
+    if (!selectedId) return;
+    setState((s) => {
+      const tracks = s.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }));
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+    setSelectedId(null);
+  };
+
+  // keyboard: Delete/Backspace removes the selected clip; Space toggles play.
+  useEffect(() => {
+    const editable = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
+    const onKey = (e: KeyboardEvent) => {
+      if (editable()) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); deleteSelected(); }
+      else if (e.key === ' ') { e.preventDefault(); playerRef.current?.toggle(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   // ── import footage ──
   const onImport = async () => {
@@ -190,7 +224,14 @@ export default function App() {
         </aside>
       </div>
 
-      <TimelineStrip state={state} currentFrame={frame} onSeek={seek} />
+      <TimelineStrip
+        state={state}
+        currentFrame={frame}
+        onSeek={seek}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onUpdateClip={updateClip}
+      />
     </div>
   );
 }
