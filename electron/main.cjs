@@ -36,6 +36,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#0b0c0e',
     title: 'Flimify Studio',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -76,7 +77,13 @@ ipcMain.handle('open-video', async () => {
 });
 ipcMain.on('reveal-file', (_e, p) => { try { shell.showItemInFolder(p); } catch {} });
 
-app.whenReady().then(() => { startBridge(); createWindow(); });
+app.whenReady().then(() => {
+  if (process.platform === 'darwin' && app.dock) {
+    try { app.dock.setIcon(path.join(__dirname, '..', 'build', 'icon.png')); } catch {}
+  }
+  startBridge();
+  createWindow();
+});
 app.on('before-quit', stopBridge);
 app.on('window-all-closed', () => { stopBridge(); if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

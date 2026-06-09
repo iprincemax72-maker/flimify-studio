@@ -23,9 +23,10 @@
     "extraResources": [
       { "from": "render", "to": "render" }
     ],
-    "directories": { "output": "release" },
-    "mac": { "target": "dmg", "category": "public.app-category.video" },
-    "win": { "target": "nsis" }
+    "directories": { "output": "release", "buildResources": "build" },
+    "mac": { "target": "dmg", "category": "public.app-category.video", "icon": "build/icon.icns" },
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "dmg": { "title": "Flimify Studio" }
   },
   "dependencies": {
     "@remotion/player": "^4.0.474",
