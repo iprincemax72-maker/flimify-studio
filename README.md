@@ -11,6 +11,8 @@ subscription — no API key, no per-render cost.**
 > same engine, much bigger audience — like Submagic / Opus / Captions, but the
 > AI is free because it runs locally on your Claude.
 
+![Flimify Studio](docs/screenshot.png)
+
 ## What works today
 
 - **Import footage** → media bin → timeline (V1), served to the live preview
@@ -20,6 +22,8 @@ subscription — no API key, no per-render cost.**
 - **Generate AI overlays** — describe a lower-third / title / callout → the
   local Claude CLI builds a Remotion or HyperFrames graphic → alpha overlay
   drops onto V2. No API key.
+- **Auto-Captions** — one click transcribes the footage (parakeet-mlx, local)
+  and renders an animated TikTok-style caption track onto V2. No API key.
 - **Timeline editing** — select, drag to move, edge-drag to trim, Delete to
   remove. Space toggles play.
 - **Export** → renders the timeline to an mp4 via Remotion.
@@ -80,8 +84,8 @@ The backend reads a few env vars (sensible defaults):
   `remotion-intro` Remotion install (full toolkit + HyperFrames). Bundling a
   self-contained render project into the app is the next packaging step so it
   runs with zero external setup.
-- **Auto-Edit + Captions**: the extension's speech-driven features still need
-  porting to the in-app timeline (the only Premiere-specific layer to replace).
+- **Auto-Edit graphic-placement**: captions are ported; the remaining piece is
+  placing *graphics* at detected speech moments (reuses /generate per moment).
 - **Web mode**: same editor UI, but generation runs server-side (no local CLI
   on the web) — a metered paid tier, after the desktop app.
 
