@@ -17,7 +17,11 @@
     "productName": "Flimify Studio",
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "studio-bridge/**/*"
+    ],
+    "extraResources": [
+      { "from": "render", "to": "render" }
     ],
     "directories": { "output": "release" },
     "mac": { "target": "dmg", "category": "public.app-category.video" },

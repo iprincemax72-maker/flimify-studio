@@ -1,129 +1,195 @@
-// Flimify Studio — the standalone editor shell. Premiere-style 4-pane layout:
-// media bin · live preview (Remotion Player) · Flimify AI panel · timeline.
-// The skeleton proves the thesis: footage + an AI overlay composited live in
-// the SAME Remotion composition that will export to mp4.
-import { useEffect, useRef, useState } from 'react';
+// Flimify Studio — the editor shell, fully wired to the studio-bridge:
+// import footage, generate AI overlays (no API key), export to mp4. Premiere-
+// style 4-pane layout; the timeline IS the Remotion composition that previews
+// AND exports.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { TimelineComposition } from './editor/Composition';
 import { TimelineStrip } from './editor/TimelineStrip';
-import type { EditorState } from './editor/types';
+import { FlimifyPanel } from './panels/FlimifyPanel';
+import type { Clip, EditorState, Track } from './editor/types';
+import { health, importPath, exportTimeline, toTimelineClip, type BridgeClip } from './api';
 import './App.css';
 
 const FPS = 30;
+// Dev fallback when not running in Electron (so import is testable in a browser).
+const DEV_SAMPLE = '/Users/anshdhakad/All Claude Work/flimify-studio/public/sample.mp4';
 
-// Sample project: real footage on V1, two AI-style overlays on V2.
-const initialState: EditorState = {
+const emptyState = (): EditorState => ({
   fps: FPS,
   width: 1920,
   height: 1080,
-  durationInFrames: 240, // 8s
+  durationInFrames: 300,
   tracks: [
-    {
-      id: 'v1',
-      label: 'V1',
-      clips: [
-        { id: 'c1', kind: 'video', src: '/sample.mp4', from: 0, durationInFrames: 240, name: 'sample.mp4' },
-      ],
-    },
-    {
-      id: 'v2',
-      label: 'V2',
-      clips: [
-        { id: 'o1', kind: 'title', text: 'Built with Flimify', color: '#ffffff', from: 30, durationInFrames: 110, name: 'Title · Built with Flimify' },
-        { id: 'o2', kind: 'title', text: 'No Premiere needed', color: '#E2885F', from: 150, durationInFrames: 80, name: 'Title · No Premiere needed' },
-      ],
-    },
+    { id: 'v1', label: 'V1', clips: [] },
+    { id: 'v2', label: 'V2', clips: [] },
   ],
+});
+
+const recomputeDuration = (tracks: Track[]): number => {
+  let end = 0;
+  for (const t of tracks) for (const c of t.clips) end = Math.max(end, c.from + c.durationInFrames);
+  return Math.max(end, 1);
 };
 
 const fmt = (frame: number, fps: number) => {
   const t = frame / fps;
-  const m = Math.floor(t / 60);
-  const s = Math.floor(t % 60);
-  const ff = Math.floor(frame % fps);
-  return `${m}:${String(s).padStart(2, '0')}:${String(ff).padStart(2, '0')}`;
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}:${String(Math.floor(frame % fps)).padStart(2, '0')}`;
 };
 
 export default function App() {
-  const [state] = useState<EditorState>(initialState);
-  const playerRef = useRef<PlayerRef>(null);
+  const [state, setState] = useState<EditorState>(emptyState);
+  const [bin, setBin] = useState<BridgeClip[]>([]);
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [online, setOnline] = useState<boolean | null>(null);
+  const [status, setStatus] = useState('');
+  const playerRef = useRef<PlayerRef>(null);
 
-  // Keep the playhead + readout synced to the Player every animation frame.
+  // bridge health
+  useEffect(() => {
+    let alive = true;
+    const check = async () => { const ok = await health(); if (alive) setOnline(ok); };
+    check();
+    const t = setInterval(check, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  // sync playhead/readout to the Player
   useEffect(() => {
     let raf = 0;
     const tick = () => {
       const p = playerRef.current;
-      if (p) {
-        setFrame(p.getCurrentFrame());
-        setPlaying(p.isPlaying());
-      }
+      if (p) { setFrame(p.getCurrentFrame()); setPlaying(p.isPlaying()); }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  const hasClips = useMemo(() => state.tracks.some((t) => t.clips.length), [state]);
+
+  const addClip = (trackId: string, clip: Clip) => {
+    setState((s) => {
+      const tracks = s.tracks.map((t) => (t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t));
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+  };
+
+  // ── import footage ──
+  const onImport = async () => {
+    try {
+      let p: string | null = null;
+      if (window.flimify?.openVideo) p = await window.flimify.openVideo();
+      else p = DEV_SAMPLE; // browser dev fallback
+      if (!p) return;
+      setStatus('Importing…');
+      const clip = await importPath(p);
+      setBin((b) => [clip, ...b]);
+      // place after the last V1 clip
+      setState((s) => {
+        const v1 = s.tracks.find((t) => t.id === 'v1')!;
+        const at = v1.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
+        const tracks = s.tracks.map((t) =>
+          t.id === 'v1' ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
+        );
+        return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
+      });
+      setStatus('');
+    } catch (e) {
+      setStatus('Import failed: ' + (e as Error).message);
+    }
+  };
+
+  // ── generated overlay → V2 at the playhead ──
+  const onGenerated = (b: BridgeClip) => {
+    setBin((x) => [b, ...x]);
+    addClip('v2', toTimelineClip(b, frame));
+  };
+
+  // ── export ──
+  const [exporting, setExporting] = useState(false);
+  const onExport = async () => {
+    if (!hasClips || exporting) return;
+    setExporting(true);
+    setStatus('Exporting…');
+    try {
+      const out = await exportTimeline(state, 'flimify-export');
+      setStatus('Exported → ' + out);
+      window.flimify?.revealFile?.(out);
+    } catch (e) {
+      setStatus('Export failed: ' + (e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const seek = (f: number) => playerRef.current?.seekTo(f);
-  const toggle = () => playerRef.current?.toggle();
 
   return (
     <div className="studio">
-      {/* ── top bar ── */}
       <header className="topbar">
         <div className="brand"><span className="logo">F</span> Flimify <small>Studio</small></div>
-        <div className="topbar-mid">sample-project</div>
+        <div className="topbar-mid">
+          <span className={'dot ' + (online ? 'on' : online === false ? 'off' : '')} />
+          {online ? 'engine ready' : online === false ? 'engine offline' : 'connecting…'}
+          {status && <span className="status"> · {status}</span>}
+        </div>
         <div className="topbar-right">
-          <button className="btn ghost" disabled title="Coming next">Export</button>
+          <button className="btn" onClick={onExport} disabled={!hasClips || exporting}>
+            {exporting ? 'Exporting…' : 'Export'}
+          </button>
         </div>
       </header>
 
-      {/* ── 3-column work area ── */}
       <div className="work">
-        {/* media bin */}
         <aside className="panel bin">
           <div className="panel-h">Media</div>
-          <div className="bin-item">
-            <div className="bin-thumb" />
-            <div className="bin-meta"><b>sample.mp4</b><span>1920×1080 · 8s</span></div>
+          <div className="bin-list">
+            {bin.length === 0 && <div className="bin-empty">No media yet</div>}
+            {bin.map((c) => (
+              <div className="bin-item" key={c.id}>
+                <div className="bin-thumb" />
+                <div className="bin-meta"><b>{c.name}</b><span>{c.width}×{c.height}</span></div>
+              </div>
+            ))}
           </div>
-          <button className="bin-import" disabled>+ Import (coming)</button>
+          <button className="bin-import" onClick={onImport}>+ Import video</button>
         </aside>
 
-        {/* preview */}
         <main className="stage">
           <div className="player-wrap">
-            <Player
-              ref={playerRef}
-              component={TimelineComposition}
-              inputProps={{ state }}
-              durationInFrames={state.durationInFrames}
-              fps={state.fps}
-              compositionWidth={state.width}
-              compositionHeight={state.height}
-              style={{ width: '100%', height: '100%' }}
-              acknowledgeRemotionLicense
-            />
+            {hasClips ? (
+              <Player
+                ref={playerRef}
+                component={TimelineComposition}
+                inputProps={{ state }}
+                durationInFrames={state.durationInFrames}
+                fps={state.fps}
+                compositionWidth={state.width}
+                compositionHeight={state.height}
+                style={{ width: '100%', height: '100%' }}
+                acknowledgeRemotionLicense
+              />
+            ) : (
+              <div className="stage-empty">
+                <p>Import a video or generate a graphic to begin.</p>
+              </div>
+            )}
           </div>
           <div className="transport">
-            <button className="btn play" onClick={toggle}>{playing ? '❚❚' : '►'}</button>
+            <button className="btn play" onClick={() => playerRef.current?.toggle()} disabled={!hasClips}>{playing ? '❚❚' : '►'}</button>
             <span className="tc">{fmt(frame, state.fps)}</span>
             <span className="tc dim">/ {fmt(state.durationInFrames, state.fps)}</span>
           </div>
         </main>
 
-        {/* Flimify AI panel (docks the real chat/auto-edit/captions UI next) */}
         <aside className="panel flimify">
           <div className="panel-h">Flimify</div>
-          <div className="flimify-stub">
-            <p>Chat · Auto-Edit · Captions</p>
-            <p className="dim">The existing panel docks here and drops generated graphics straight onto the timeline.</p>
-          </div>
+          <FlimifyPanel width={state.width} height={state.height} onClip={onGenerated} />
         </aside>
       </div>
 
-      {/* ── timeline ── */}
       <TimelineStrip state={state} currentFrame={frame} onSeek={seek} />
     </div>
   );
