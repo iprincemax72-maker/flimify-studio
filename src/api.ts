@@ -74,6 +74,11 @@ export async function exportTimeline(state: EditorState, name: string): Promise<
   return path;
 }
 
+export async function caption(clipId: string, style = 'tiktok'): Promise<BridgeClip> {
+  const { clip } = await post<{ clip: BridgeClip }>('/caption', { clipId, style });
+  return clip;
+}
+
 /** Normalize a bridge clip → an editor timeline clip placed at `from`. */
 export function toTimelineClip(b: BridgeClip, from: number): Clip {
   return {

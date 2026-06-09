@@ -33,7 +33,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   color: #1a1205; font-weight: 800;
 }
 .topbar-mid { color: var(--dim); font-size: 13px; }
-.topbar-right { margin-left: auto; }
+.topbar-right { margin-left: auto; display: flex; gap: 8px; }
 
 .btn {
   border: 1px solid var(--line); background: var(--panel-2); color: var(--text);

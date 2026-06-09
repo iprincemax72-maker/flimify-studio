@@ -206,6 +206,108 @@ function exportTimeline(state, name) {
   });
 }
 
+// ── auto-captions: extract audio → parakeet transcribe → animated overlay ───
+const PARAKEET = (() => {
+  for (const p of [path.join(HOME, '.local', 'bin', 'parakeet-mlx'), '/opt/homebrew/bin/parakeet-mlx', '/usr/local/bin/parakeet-mlx']) {
+    try { if (fs.existsSync(p)) return p; } catch {}
+  }
+  return 'parakeet-mlx';
+})();
+
+function extractAudio(clipPath) {
+  return new Promise((resolve, reject) => {
+    const out = path.join(WORK_DIR, '_capaudio_' + Date.now().toString(36) + '.wav');
+    const ff = spawn(FFMPEG, ['-y', '-i', clipPath, '-ac', '1', '-ar', '16000', out]);
+    let er = ''; ff.stderr.on('data', (d) => (er += d.toString().slice(-1500)));
+    const k = setTimeout(() => { try { ff.kill('SIGKILL'); } catch {} reject(new Error('audio extract timeout')); }, 90000);
+    ff.on('error', (e) => { clearTimeout(k); reject(e); });
+    ff.on('close', (c) => { clearTimeout(k); (c === 0 && fs.existsSync(out)) ? resolve(out) : reject(new Error('extract exit ' + c + ': ' + er.slice(-200))); });
+  });
+}
+
+function transcribe(wav) {
+  return new Promise((resolve, reject) => {
+    const outDir = path.dirname(wav), base = path.basename(wav, path.extname(wav)), jsonOut = path.join(outDir, base + '.json');
+    try { fs.unlinkSync(jsonOut); } catch {}
+    const proc = spawn(PARAKEET, ['--output-format', 'json', '--output-dir', outDir, wav], { env: process.env });
+    let er = ''; proc.stderr.on('data', (d) => (er += d.toString().slice(-1500))); proc.stdout.on('data', () => {});
+    const k = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} reject(new Error('parakeet timeout')); }, 15 * 60 * 1000);
+    proc.on('error', (e) => { clearTimeout(k); reject(e); });
+    proc.on('close', (c) => {
+      clearTimeout(k);
+      if (c !== 0 || !fs.existsSync(jsonOut)) { reject(new Error('parakeet exit ' + c + ' (is parakeet-mlx installed? `uv tool install parakeet-mlx`): ' + er.slice(-200))); return; }
+      try {
+        const j = JSON.parse(fs.readFileSync(jsonOut, 'utf8'));
+        const segs = (j.sentences || []).map((s) => ({ start: +s.start || 0, end: +s.end || 0, text: (s.text || '').trim() })).filter((s) => s.text && s.end > s.start);
+        try { fs.unlinkSync(jsonOut); } catch {} try { fs.unlinkSync(wav); } catch {}
+        resolve(segs);
+      } catch (e) { reject(new Error('parakeet json parse: ' + e.message)); }
+    });
+  });
+}
+
+// sentences → TikTok-style caption pages (~5 words/page, timing spread evenly)
+function sentencesToLines(segs) {
+  const lines = [];
+  for (const s of segs) {
+    const words = s.text.split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    const per = ((s.end - s.start) * 1000) / words.length;
+    const timed = words.map((w, i) => ({ text: w, startMs: Math.round(s.start * 1000 + i * per), endMs: Math.round(s.start * 1000 + (i + 1) * per) }));
+    for (let i = 0; i < timed.length; i += 5) {
+      const pg = timed.slice(i, i + 5);
+      lines.push({ words: pg, startMs: pg[0].startMs, endMs: pg[pg.length - 1].endMs });
+    }
+  }
+  return lines;
+}
+
+function renderCaptions(lines, w, h, fps, style) {
+  return new Promise((resolve) => {
+    const id = Date.now().toString(36);
+    const entryRel = path.join('src', '_studcap_' + id + '.tsx');
+    const entryAbs = path.join(RENDER_PROJECT, entryRel);
+    const propsFile = path.join(WORK_DIR, '_capprops_' + id + '.json');
+    const outFile = path.join(RENDER_DIR, 'captions_' + id + '.mov');
+    const entry = `import { registerRoot, Composition } from 'remotion';
+import { Captions } from './Captions';
+const Root = () => (
+  <Composition id="Captions" component={Captions}
+    defaultProps={{ lines: [], style: '${style}', options: {}, fps: ${fps}, width: ${w}, height: ${h} }}
+    calculateMetadata={({ props }) => { const f = props.fps || ${fps}; const ends = (props.lines || []).map((l) => l.endMs); const maxMs = ends.length ? Math.max(...ends) : 1000; return { durationInFrames: Math.max(1, Math.ceil((maxMs / 1000 + 0.3) * f)), width: props.width || ${w}, height: props.height || ${h}, fps: f }; }} />
+);
+registerRoot(Root);`;
+    fs.writeFileSync(entryAbs, entry);
+    fs.writeFileSync(propsFile, JSON.stringify({ lines, style, options: {}, fps, width: w, height: h }));
+    const args = ['remotion', 'render', entryRel, 'Captions', outFile, '--codec=prores', '--prores-profile=4444', '--image-format=png', '--pixel-format=yuva444p10le', '--mute', '--hardware-acceleration=if-possible', '--props=' + propsFile, '--log=error'];
+    const proc = spawn('npx', args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let er = ''; proc.stderr.on('data', (c) => (er += c.toString()));
+    const clean = () => { try { fs.unlinkSync(entryAbs); } catch {} try { fs.unlinkSync(propsFile); } catch {} };
+    proc.on('close', (code) => { clean(); (code === 0 && fs.existsSync(outFile)) ? resolve({ ok: true, file: outFile }) : resolve({ ok: false, error: 'caption render failed: ' + er.slice(-300) }); });
+    proc.on('error', (e) => { clean(); resolve({ ok: false, error: e.message }); });
+  });
+}
+
+async function autoCaption(clipId, style) {
+  const entry = registry[clipId];
+  if (!entry || !fs.existsSync(entry.path)) return { ok: false, error: 'unknown clip' };
+  const meta = await probe(entry.path);
+  if (!meta) return { ok: false, error: 'could not read clip' };
+  log('captions: extracting audio…');
+  const wav = await extractAudio(entry.path);
+  log('captions: transcribing…');
+  const segs = await transcribe(wav);
+  if (!segs.length) return { ok: false, error: 'no speech found in the clip' };
+  const lines = sentencesToLines(segs);
+  log('captions: rendering ' + lines.length + ' pages…');
+  const r = await renderCaptions(lines, meta.width, meta.height, FPS, style || 'tiktok');
+  if (!r.ok) return r;
+  const cm = await probe(r.file);
+  const id = register(r.file, 'Captions');
+  log('captions: done');
+  return { ok: true, clip: clipFromProbe(id, 'Captions', cm) };
+}
+
 // ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const u = req.url || '/';
@@ -235,6 +337,14 @@ const server = http.createServer(async (req, res) => {
     if (!body.state) return sendJson(res, 400, { error: 'no timeline' });
     const r = await exportTimeline(body.state, body.name);
     return sendJson(res, r.ok ? 200 : 500, r);
+  }
+  if (req.method === 'POST' && u === '/caption') {
+    const body = await readBody(req);
+    if (!body.clipId) return sendJson(res, 400, { error: 'no clip' });
+    try {
+      const r = await autoCaption(body.clipId, body.style);
+      return sendJson(res, r.ok ? 200 : 500, r);
+    } catch (e) { return sendJson(res, 500, { error: e.message }); }
   }
   res.writeHead(404, { 'Access-Control-Allow-Origin': '*' });
   res.end('not found');

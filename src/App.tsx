@@ -8,7 +8,7 @@ import { TimelineComposition } from './editor/Composition';
 import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
 import type { Clip, EditorState, Track } from './editor/types';
-import { health, importPath, exportTimeline, toTimelineClip, type BridgeClip } from './api';
+import { health, importPath, exportTimeline, caption, toTimelineClip, type BridgeClip } from './api';
 import './App.css';
 
 const FPS = 30;
@@ -158,6 +158,26 @@ export default function App() {
     }
   };
 
+  // ── auto-captions: transcribe V1 footage → animated caption track on V2 ──
+  const [captioning, setCaptioning] = useState(false);
+  const onCaption = async () => {
+    const v1 = state.tracks.find((t) => t.id === 'v1');
+    const clip = v1?.clips.find((c) => c.kind === 'video');
+    if (!clip) { setStatus('Import footage first'); return; }
+    if (captioning) return;
+    setCaptioning(true);
+    setStatus('Auto-captioning — transcribing + rendering…');
+    try {
+      const cap = await caption(clip.id, 'tiktok');
+      addClip('v2', toTimelineClip(cap, clip.from));
+      setStatus('Captions added to V2');
+    } catch (e) {
+      setStatus('Captions failed: ' + (e as Error).message);
+    } finally {
+      setCaptioning(false);
+    }
+  };
+
   const seek = (f: number) => playerRef.current?.seekTo(f);
 
   // native menu (Cmd+I / Cmd+E) → editor actions. Register once; use refs for
@@ -181,6 +201,9 @@ export default function App() {
           {status && <span className="status"> · {status}</span>}
         </div>
         <div className="topbar-right">
+          <button className="btn" onClick={onCaption} disabled={captioning}>
+            {captioning ? 'Captioning…' : 'Captions'}
+          </button>
           <button className="btn" onClick={onExport} disabled={!hasClips || exporting}>
             {exporting ? 'Exporting…' : 'Export'}
           </button>
