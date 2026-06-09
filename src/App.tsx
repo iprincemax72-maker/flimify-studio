@@ -160,6 +160,17 @@ export default function App() {
 
   const seek = (f: number) => playerRef.current?.seekTo(f);
 
+  // native menu (Cmd+I / Cmd+E) → editor actions. Register once; use refs for
+  // the latest handlers so the listener isn't re-added every render.
+  const importRef = useRef(onImport); importRef.current = onImport;
+  const exportRef = useRef(onExport); exportRef.current = onExport;
+  useEffect(() => {
+    window.flimify?.onMenu?.((action) => {
+      if (action === 'import') importRef.current();
+      else if (action === 'export') exportRef.current();
+    });
+  }, []);
+
   return (
     <div className="studio">
       <header className="topbar">

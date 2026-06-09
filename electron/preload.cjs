@@ -13,4 +13,6 @@ contextBridge.exposeInMainWorld('flimify', {
   openVideo: () => ipcRenderer.invoke('open-video'),
   // reveal an exported file in Finder/Explorer
   revealFile: (p) => ipcRenderer.send('reveal-file', p),
+  // native menu → renderer actions (import / export)
+  onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action)),
 });

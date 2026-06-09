@@ -3,7 +3,7 @@
 // own Node — so the packaged app needs no system Node. The bridge is what spawns
 // the local Claude CLI + renders, preserving the "free on your own subscription,
 // no API key" model on desktop.
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -66,6 +66,58 @@ function createWindow() {
   return win;
 }
 
+// Tell the renderer to run a menu action (Import / Export).
+const sendMenu = (action) => mainWin && mainWin.webContents.send('menu', action);
+
+function aboutBox() {
+  dialog.showMessageBox(mainWin, {
+    type: 'info',
+    title: 'Flimify Studio',
+    message: 'Flimify Studio',
+    detail:
+      `An AI-native video editor.\nGenerate motion graphics, auto-edit, and caption — no Premiere needed.\n\n` +
+      `Version ${app.getVersion()} · Electron ${process.versions.electron}\nRuns on your own Claude — no API key.`,
+    buttons: ['Close', 'flimify.com'],
+    defaultId: 0,
+  }).then((r) => { if (r.response === 1) shell.openExternal('https://www.flimify.com'); });
+}
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { label: 'About Flimify Studio', click: aboutBox },
+        { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'Import Video…', accelerator: 'CmdOrCtrl+I', click: () => sendMenu('import') },
+        { label: 'Export…', accelerator: 'CmdOrCtrl+E', click: () => sendMenu('export') },
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' },
+      ],
+    },
+    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [{ role: 'close' }])] },
+    {
+      role: 'help',
+      submenu: [
+        { label: 'Flimify Website', click: () => shell.openExternal('https://www.flimify.com') },
+        ...(isMac ? [] : [{ type: 'separator' }, { label: 'About', click: aboutBox }]),
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // ── IPC the renderer (editor UI) uses, exposed via preload ──
 ipcMain.handle('open-video', async () => {
   const r = await dialog.showOpenDialog(mainWin, {
@@ -81,6 +133,7 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) {
     try { app.dock.setIcon(path.join(__dirname, '..', 'build', 'icon.png')); } catch {}
   }
+  buildMenu();
   startBridge();
   createWindow();
 });
