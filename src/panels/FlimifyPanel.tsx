@@ -16,13 +16,14 @@ type Props = {
   height: number;
   durationSec?: number;
   defaultEngine?: Engine;
+  inject?: { text: string; id: number } | null;
   onRender: (clip: BridgeClip, prompt: string) => void;
   onImport: (clip: BridgeClip) => void;
   onPreview: (clip: BridgeClip) => void;
   onDelete: (clip: BridgeClip) => Promise<boolean>;
 };
 
-export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, defaultEngine = 'remotion', onRender, onImport, onPreview, onDelete }) => {
+export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, defaultEngine = 'remotion', inject, onRender, onImport, onPreview, onDelete }) => {
   const [tabs, setTabs] = useState<FlimifyTab[]>(() => [newTab('animation', defaultEngine, 'default')]);
   const [activeId, setActiveId] = useState<string>(() => tabs[0].id);
   const [, force] = useState(0); // re-render tick for the progress estimate
@@ -45,6 +46,14 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   // keep latest tabs/active for the global shortcut listener (bind once)
   const liveRef = useRef({ tabs, activeId });
   liveRef.current = { tabs, activeId };
+
+  // "Use prompt" from History injects text into the active tab's draft
+  useEffect(() => {
+    if (!inject) return;
+    patch(liveRef.current.activeId, (t) => ({ ...t, draft: inject.text }));
+    requestAnimationFrame(() => inputRef.current?.focus());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inject?.id]);
 
   // ── keyboard shortcuts (ported from the extension) ──
   useEffect(() => {

@@ -58,6 +58,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [inject, setInject] = useState<{ text: string; id: number } | null>(null);
   const playerRef = useRef<PlayerRef>(null);
 
   const addHistory = (clip: BridgeClip, kind: HistoryKind, prompt?: string) => {
@@ -434,6 +435,7 @@ export default function App() {
             height={aspectDims(settings.aspect, state.width, state.height)[1]}
             durationSec={settings.duration === 'auto' ? 4 : Number(settings.duration)}
             defaultEngine={settings.engine}
+            inject={inject}
             onRender={onRenderLogged}
             onImport={onImportClip}
             onPreview={onPreviewClip}
@@ -463,7 +465,13 @@ export default function App() {
         />
       )}
       {historyOpen && (
-        <HistoryPanel history={history} onClose={() => setHistoryOpen(false)} onAdd={onHistoryAdd} onDelete={onHistoryDelete} />
+        <HistoryPanel
+          history={history}
+          onClose={() => setHistoryOpen(false)}
+          onAdd={onHistoryAdd}
+          onDelete={onHistoryDelete}
+          onUsePrompt={(text) => { setInject({ text, id: frame + Math.floor(performance.now()) }); setHistoryOpen(false); }}
+        />
       )}
       <FeedbackHost />
     </div>
