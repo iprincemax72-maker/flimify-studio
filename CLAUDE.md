@@ -36,11 +36,21 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
 - Verify changes with Playwright against the dev server (localhost:5191) or the
   web build (localhost:3939/app).
 
-## Account / sign-in
-- Generation never needs an account (it's the user's own Claude → unlimited).
-- Sign-in is a **local profile** (name/email → `~/FlimifyStudio/session.json`).
-  Do NOT open external auth pages that don't exist. Real Google/cloud auth is a
-  future flimify.com feature; only link to `/account.html`.
+## Account / sign-in (REAL Google via Supabase — don't break this)
+- Studio reuses the **same Supabase project as the Premiere extension**:
+  - URL `https://hwsyaqmkwitxprtnrzkj.supabase.co`, anon/publishable key
+    `sb_publishable_k7tsIqZia0WXf4eGQwcY2w_jFjAkDEK` (public, safe to embed).
+  - Owner emails: `iprincemax72@gmail.com`, `anshdhakad9@gmail.com` (→ owner, ∞).
+- The bridge **auto-reads the extension's session** (`~/PremiereClaude/session.json`)
+  so if you're signed into the extension you're signed into Studio — real name +
+  **Google avatar** (`user_metadata.avatar_url`) + owner.
+- Fresh sign-in: account button → opens `http://localhost:3939/connect` (the
+  bridge serves a Supabase Google-OAuth page) → captures session to
+  `~/FlimifyStudio/session.json`. For this to complete, Supabase **Redirect URLs
+  must include `http://localhost:3939/connect`** (the extension's is `:3737`).
+- The dashboard/manage link text is **"Dashboard"**, URL `…/account.html`.
+- Generation is always unlimited (own Claude); sign-in is optional — no blocking
+  login wall on desktop.
 
 ## Security
 - The user pasted API keys in chat earlier (Hera, Submagic). NEVER persist or
