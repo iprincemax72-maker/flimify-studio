@@ -254,6 +254,18 @@ export const CATEGORIES: string[] = (() => {
 
 export const ALL: Suggestion[] = SUGGESTIONS.map(([label, prompt, cat]) => ({ label, prompt, cat }));
 
+/** Ghost-autocomplete: the first suggestion prompt that begins with `text`
+ *  (instant, client-side — no model call). Returns the full prompt, or null. */
+export function ghostFor(text: string): string | null {
+  const t = text.trimStart();
+  if (t.length < 3) return null;
+  const lc = t.toLowerCase();
+  for (const [, prompt] of SUGGESTIONS) {
+    if (prompt.toLowerCase().startsWith(lc) && prompt.length > t.length) return prompt;
+  }
+  return null;
+}
+
 /** Items for a category (search overrides category and matches across all). */
 export function chipsFor(cat: string, query: string): Suggestion[] {
   const q = query.trim().toLowerCase();

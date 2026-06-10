@@ -76,6 +76,17 @@ export async function exportTimeline(state: EditorState, name: string): Promise<
   return path;
 }
 
+export async function expandPrompt(prompt: string, level: 'light' | 'medium' | 'heavy'): Promise<string> {
+  const { prompt: out } = await post<{ prompt: string }>('/expand', { prompt, level });
+  return out;
+}
+
+export type PlanQuestion = { id: string; q: string; options: { value: string; label: string }[] };
+export async function planQuestions(message: string): Promise<PlanQuestion[]> {
+  const { questions } = await post<{ questions: PlanQuestion[] }>('/plan/questions', { message });
+  return questions || [];
+}
+
 export async function caption(clipId: string, style = 'tiktok'): Promise<BridgeClip> {
   const { clip } = await post<{ clip: BridgeClip }>('/caption', { clipId, style });
   return clip;

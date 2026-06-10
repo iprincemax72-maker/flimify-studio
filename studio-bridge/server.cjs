@@ -244,6 +244,57 @@ function generate({ prompt, engine, width, height, durationSec, mode }, onStatus
   });
 }
 
+// ── lightweight Claude text calls (expand prompt, plan questions) ───────────
+// Pure text in / text out via the local CLI — no render, no API key. Used by
+// the composer's Expand button and the "Ask Questions" plan interview.
+function claudeText(prompt, sys, timeoutMs = 90000) {
+  return new Promise((resolve) => {
+    const args = ['-p', '--no-session-persistence'];
+    if (sys) args.push('--append-system-prompt', sys);
+    args.push(prompt);
+    let proc;
+    try { proc = spawn(CLAUDE, args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { return resolve({ ok: false, error: 'claude not available: ' + e.message }); }
+    let out = '', er = '';
+    proc.stdout.on('data', (c) => (out += c.toString()));
+    proc.stderr.on('data', (c) => (er += c.toString().slice(-1200)));
+    const k = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, timeoutMs);
+    proc.on('error', (e) => { clearTimeout(k); resolve({ ok: false, error: e.message }); });
+    proc.on('close', () => {
+      clearTimeout(k);
+      const text = (out || '').trim();
+      text ? resolve({ ok: true, text }) : resolve({ ok: false, error: er.slice(-200) || 'no output' });
+    });
+  });
+}
+
+const EXPAND_SYS = {
+  light: 'Lightly. Add a couple of concrete specifics (one or two details).',
+  medium: 'Moderately. Flesh it out with composition, motion and type details.',
+  heavy: 'Heavily. Write a rich, fully-specified creative brief — palette, type, layout, motion, timing.',
+};
+async function expandPrompt(prompt, level) {
+  const sys = `You rewrite a short motion-graphic prompt into a fuller, clearer creative brief for a video editor. ${EXPAND_SYS[level] || EXPAND_SYS.light} Keep the user's original intent and subject. Do NOT add a background unless asked (overlays are transparent). Return ONLY the rewritten prompt text — no preamble, no quotes, no markdown.`;
+  const r = await claudeText(prompt, sys, 90000);
+  if (!r.ok) return r;
+  return { ok: true, prompt: r.text.replace(/^["'`]|["'`]$/g, '').trim() };
+}
+
+async function planQuestions(message) {
+  const sys = `You help plan a motion graphic before it's built. Given the user's request, ask 2-3 quick multiple-choice questions whose answers would meaningfully steer the result (e.g. tone, palette, motion style, emphasis). Return ONLY a JSON array, no prose, of the form:
+[{"id":"tone","q":"Overall tone?","options":[{"value":"minimal","label":"Clean & minimal"},{"value":"energetic","label":"Energetic & punchy"}]}]
+2-4 options per question. No trailing commentary.`;
+  const r = await claudeText(message, sys, 90000);
+  if (!r.ok) return { ok: true, questions: [] }; // fail-open → build directly
+  let txt = r.text.trim();
+  const a = txt.indexOf('['), b = txt.lastIndexOf(']');
+  if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
+  try {
+    const questions = JSON.parse(txt);
+    return { ok: true, questions: Array.isArray(questions) ? questions.slice(0, 4) : [] };
+  } catch { return { ok: true, questions: [] }; }
+}
+
 // ── export: timeline state → Remotion render → mp4 ──────────────────────────
 function exportTimeline(state, name) {
   return new Promise((resolve) => {
@@ -405,6 +456,18 @@ const server = http.createServer(async (req, res) => {
     if (!body.prompt) return sendJson(res, 400, { error: 'empty prompt' });
     const r = await generate(body);
     return sendJson(res, r.ok ? 200 : 500, r);
+  }
+  if (req.method === 'POST' && u === '/expand') {
+    const body = await readBody(req);
+    if (!body.prompt) return sendJson(res, 400, { error: 'empty prompt' });
+    const r = await expandPrompt(String(body.prompt), body.level);
+    return sendJson(res, r.ok ? 200 : 500, r);
+  }
+  if (req.method === 'POST' && u === '/plan/questions') {
+    const body = await readBody(req);
+    if (!body.message) return sendJson(res, 400, { error: 'empty message' });
+    const r = await planQuestions(String(body.message));
+    return sendJson(res, 200, r);
   }
   if (req.method === 'POST' && u === '/export') {
     const body = await readBody(req);

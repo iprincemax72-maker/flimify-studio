@@ -4,8 +4,9 @@
 // Changes / Delete — a 1:1 port of the Premiere extension, on the no-API-key
 // local-Claude model.
 import { useEffect, useRef, useState } from 'react';
-import { generate, type BridgeClip } from '../api';
-import { CATEGORIES, chipsFor } from '../suggestions';
+import { generate, expandPrompt, planQuestions, type BridgeClip } from '../api';
+import { CATEGORIES, chipsFor, ghostFor } from '../suggestions';
+import { toast } from '../ui/feedback';
 import {
   type Engine, type FlimifyTab, type Msg,
   mkId, newTab, labelFromPrompt,
@@ -126,6 +127,33 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const chips = chipsFor(active.chipCat, active.chipQuery);
   const useChip = (p: string) => { patch(active.id, (t) => ({ ...t, draft: p })); requestAnimationFrame(() => inputRef.current?.focus()); };
 
+  // ── prompt Expand (Low/Mid/High → bridge rewrites the brief) ──
+  const expand = async (level: 'light' | 'medium' | 'heavy') => {
+    const cur = liveRef.current.tabs.find((t) => t.id === activeId);
+    if (!cur || cur.expanding || !cur.draft.trim()) return;
+    patch(cur.id, (t) => ({ ...t, expanding: true }));
+    try { const out = await expandPrompt(cur.draft.trim(), level); patch(cur.id, (t) => ({ ...t, draft: out })); }
+    catch (e) { toast('Expand failed: ' + (e as Error).message, true); }
+    finally { patch(cur.id, (t) => ({ ...t, expanding: false })); }
+  };
+
+  // ── ghost-text autocomplete (instant, from the suggestion library) ──
+  const ghostFull = active.type === 'animation' ? ghostFor(active.draft) : null;
+  const ghostTail = ghostFull ? ghostFull.slice(active.draft.trimStart().length) : '';
+  const acceptGhost = () => { if (ghostFull) patch(active.id, (t) => ({ ...t, draft: ghostFull })); };
+
+  // ── reference images (attach via native picker; drop on the input) ──
+  const attachRef = async () => {
+    const p = await window.flimify?.openVideo?.(); // native file dialog (any media)
+    if (p) patch(active.id, (t) => ({ ...t, refs: [...t.refs, p] }));
+  };
+  const removeRef = (i: number) => patch(active.id, (t) => ({ ...t, refs: t.refs.filter((_, x) => x !== i) }));
+  const onRefDrop = (e: React.DragEvent) => {
+    const files = Array.from(e.dataTransfer?.files || []);
+    const paths = files.map((f) => window.flimify?.getPathForFile?.(f)).filter(Boolean) as string[];
+    if (paths.length) { e.preventDefault(); patch(active.id, (t) => ({ ...t, refs: [...t.refs, ...paths] })); }
+  };
+
   // ── generate ──
   // Hitting send while a tab is already rendering queues the prompt instead of
   // dropping it; the queue auto-drains FIFO when the in-flight render finishes.
@@ -140,32 +168,63 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       patch(cur.id, (t) => ({ ...t, paused: false, queue: [...t.queue, { id: mkId('q'), text: p }] }));
       return;
     }
+    // Plan mode ("Ask Questions") → interview before building.
+    if (cur.planMode && cur.type === 'animation' && !iter) { startPlan(cur.id, p); return; }
     runGen(cur.id, p, iter);
   };
 
-  const runGen = async (tabId: string, p: string, iter: typeof active.iterate) => {
+  // ── plan interview ──
+  const startPlan = async (tabId: string, prompt: string) => {
+    patch(tabId, (t) => ({ ...t, plan: { prompt, loading: true, questions: [], answers: {}, note: '' } }));
+    let qs: Awaited<ReturnType<typeof planQuestions>> = [];
+    try { qs = await planQuestions(prompt); } catch { qs = []; }
+    if (qs.length === 0) { patch(tabId, (t) => ({ ...t, plan: null })); runGen(tabId, prompt, null); return; }
+    const answers: Record<string, string> = {};
+    qs.forEach((q) => { if (q.options?.[0]) answers[q.id] = q.options[0].value; });
+    patch(tabId, (t) => (t.plan ? { ...t, plan: { ...t.plan, loading: false, questions: qs, answers } } : t));
+  };
+  const buildFromPlan = (tabId: string, withAnswers: boolean) => {
+    const cur = liveRef.current.tabs.find((t) => t.id === tabId);
+    if (!cur || !cur.plan) return;
+    const { prompt, questions, answers, note } = cur.plan;
+    let outbound = prompt;
+    if (withAnswers && questions.length) {
+      const lines = questions.map((q) => {
+        const lab = q.options.find((o) => o.value === answers[q.id])?.label || answers[q.id];
+        return `- ${q.q} ${lab}`;
+      }).join('\n');
+      outbound += `\n\n[MY CHOICES — build exactly to these]\n${lines}`;
+    }
+    if (note.trim()) outbound += `\n\n[EXTRA CONTEXT FROM ME]\n${note.trim()}`;
+    patch(tabId, (t) => ({ ...t, plan: null }));
+    runGen(tabId, outbound, null, prompt);
+  };
+
+  const runGen = async (tabId: string, p: string, iter: typeof active.iterate, displayPrompt?: string) => {
     const cur = liveRef.current.tabs.find((t) => t.id === tabId);
     if (!cur) return;
-    const engine = cur.engine, mode = cur.renderMode;
+    const engine = cur.engine, mode = cur.renderMode, refs = cur.refs;
+    const shown = displayPrompt || p;
     const n = iter ? 1 : Math.max(1, Math.min(10, cur.outputs));
     patch(tabId, (t) => ({
       ...t,
       busy: true,
       startedAt: Date.now(),
-      label: t.messages.length === 0 && t.type === 'animation' ? labelFromPrompt(p) : t.label,
-      messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + p + (n > 1 ? ` · ${n} versions` : '') }],
+      label: t.messages.length === 0 && t.type === 'animation' ? labelFromPrompt(shown) : t.label,
+      messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + shown + (n > 1 ? ` · ${n} versions` : '') }],
     }));
-    const baseOutbound = iter
+    const refLines = refs.length ? refs.map((r) => `[REFERENCE: ${r}]`).join('\n') + '\n' : '';
+    const baseOutbound = refLines + (iter
       ? `Make a new version of a previous motion graphic.\nOriginal prompt: "${iter.prompt}"\nChange to make: ${p}\nKeep everything else the same unless the change implies otherwise.`
-      : p;
+      : p);
     for (let i = 0; i < n; i++) {
       const outbound = n > 1
         ? `${baseOutbound}\n\n[VERSION ${i + 1} OF ${n} — make THIS take distinct: different composition, layout and motion from the others, while still satisfying the prompt. Variation seed ${i + 1}/${n}.]`
         : baseOutbound;
       try {
         const clip = await generate(outbound, engine, width, height, durationSec, mode);
-        onRender(clip, iter ? iter.prompt + ' · ' + p : p);
-        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: p, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }] }));
+        onRender(clip, iter ? iter.prompt + ' · ' + p : shown);
+        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: shown, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }] }));
       } catch (e) {
         patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }] }));
       }
@@ -331,7 +390,43 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
         </div>
       )}
 
-      {active.type === 'animation' && !active.iterate && (
+      {/* plan interview card */}
+      {active.plan && (
+        <div className="fp-plan">
+          {active.plan.loading ? (
+            <div className="fp-plan-loading"><span className="fp-spin" /> Thinking of a few quick questions…</div>
+          ) : (
+            <>
+              <div className="fp-plan-head">A few quick questions</div>
+              {active.plan.questions.map((q) => (
+                <div className="fp-plan-q" key={q.id}>
+                  <div className="fp-plan-qt">{q.q}</div>
+                  <div className="fp-plan-opts">
+                    {q.options.map((o) => (
+                      <button key={o.value} className={active.plan!.answers[q.id] === o.value ? 'on' : ''} onClick={() => patch(active.id, (t) => (t.plan ? { ...t, plan: { ...t.plan, answers: { ...t.plan.answers, [q.id]: o.value } } } : t))}>{o.label}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <textarea className="fp-plan-note" placeholder="Anything else? (optional)" value={active.plan.note} onChange={(e) => patch(active.id, (t) => (t.plan ? { ...t, plan: { ...t.plan, note: e.target.value } } : t))} rows={2} />
+              <div className="fp-plan-actions">
+                <button className="fp-plan-skip" onClick={() => buildFromPlan(active.id, false)}>Skip & build now</button>
+                <button className="fp-plan-build" onClick={() => buildFromPlan(active.id, true)}>Build it</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {active.refs.length > 0 && (
+        <div className="fp-refbar">
+          {active.refs.map((r, i) => (
+            <span className="fp-ref" key={i} title={r}>{r.split('/').pop()}<button onClick={() => removeRef(i)}>✕</button></span>
+          ))}
+        </div>
+      )}
+
+      {active.type === 'animation' && !active.iterate && !active.plan && (
         <div className="fp-extras">
           <div className={'fp-out' + (outOpen ? ' open' : '')}>
             <button className="fp-out-btn" onClick={() => setOutOpen((o) => !o)} title="How many versions to generate from one prompt">
@@ -346,6 +441,13 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
                 <div className="fp-out-hint">versions per prompt</div>
               </div>
             )}
+          </div>
+          <button className={'fp-pill' + (active.planMode ? ' on' : '')} onClick={() => patch(active.id, (t) => ({ ...t, planMode: !t.planMode }))} title="Ask a few questions before building">Ask Questions</button>
+          <button className="fp-pill" onClick={attachRef} title="Attach a reference image">+ Reference</button>
+          <div className="fp-expand" title="Flesh out the prompt">
+            {active.expanding ? <span className="fp-spin" /> : (['light', 'medium', 'heavy'] as const).map((lv) => (
+              <button key={lv} onClick={() => expand(lv)} disabled={!active.draft.trim()} title={lv === 'light' ? 'Low' : lv === 'medium' ? 'Mid' : 'High'}>{lv === 'light' ? 'Low' : lv === 'medium' ? 'Mid' : 'High'}</button>
+            ))}
           </div>
         </div>
       )}
@@ -372,18 +474,31 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
         </div>
       )}
 
-      <div className="fp-input">
-        <textarea
-          ref={inputRef}
-          value={active.draft}
-          onChange={(e) => patch(active.id, (t) => ({ ...t, draft: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={active.type === 'chat' ? 'Message Flimify…' : active.busy ? 'Queue another prompt…' : active.iterate ? 'What to change?' : 'Ask Flimify…'}
-          rows={2}
-        />
-        <button className="fp-send" onClick={send} disabled={!active.draft.trim()}>
-          {active.busy ? 'Add to queue' : active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
-        </button>
+      <div className="fp-input" onDragOver={(e) => { if (Array.from(e.dataTransfer?.items || []).some((i) => i.kind === 'file')) e.preventDefault(); }} onDrop={onRefDrop}>
+        <div className="fp-ta-wrap">
+          {ghostTail && (
+            <div className="fp-ghost" aria-hidden><span className="fp-ghost-typed">{active.draft}</span><span className="fp-ghost-tail">{ghostTail}</span></div>
+          )}
+          <textarea
+            ref={inputRef}
+            value={active.draft}
+            onChange={(e) => patch(active.id, (t) => ({ ...t, draft: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return; }
+              if (ghostTail && e.key === 'Tab') { e.preventDefault(); acceptGhost(); return; }
+              const el = e.currentTarget;
+              if (ghostTail && e.key === 'ArrowRight' && el.selectionStart === el.value.length) { e.preventDefault(); acceptGhost(); }
+            }}
+            placeholder={active.type === 'chat' ? 'Message Flimify…' : active.busy ? 'Queue another prompt…' : active.iterate ? 'What to change?' : 'Ask Flimify…'}
+            rows={2}
+          />
+        </div>
+        <div className="fp-input-foot">
+          {ghostTail && <span className="fp-hint">↹ Tab to complete</span>}
+          <button className="fp-send" onClick={send} disabled={!active.draft.trim()}>
+            {active.busy ? 'Add to queue' : active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
+          </button>
+        </div>
       </div>
     </div>
   );

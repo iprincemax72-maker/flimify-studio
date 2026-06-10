@@ -1,10 +1,18 @@
 // Conversation model for the Flimify panel — multi-tab chat, ported from the
 // extension's in-memory tabs[]. Each tab is its own thread with its own draft,
 // render mode, engine, and in-flight state.
-import type { BridgeClip } from '../api';
+import type { BridgeClip, PlanQuestion } from '../api';
 
 export type Engine = 'remotion' | 'hyperframes';
 export type RenderMode = 'fast' | 'default' | 'slow';
+
+export type PlanCard = {
+  prompt: string;
+  loading: boolean;
+  questions: PlanQuestion[];
+  answers: Record<string, string>;
+  note: string;
+};
 
 export type Msg =
   | { id: string; role: 'you'; text: string }
@@ -27,6 +35,10 @@ export type FlimifyTab = {
   outputs: number;       // ×N versions per prompt (1–10)
   queue: { id: string; text: string }[]; // prompts stacked while busy
   paused: boolean;       // queue paused (after a cancel) — ▶ Run resumes
+  planMode: boolean;     // "Ask Questions" — interview before building
+  plan: PlanCard | null; // active interview card
+  refs: string[];        // attached reference image paths
+  expanding: boolean;    // Expand button in flight
   chipCat: string;
   chipQuery: string;
 };
@@ -49,6 +61,10 @@ export function newTab(type: 'animation' | 'chat', engine: Engine, renderMode: R
     outputs: 1,
     queue: [],
     paused: false,
+    planMode: false,
+    plan: null,
+    refs: [],
+    expanding: false,
     chipCat: 'Popular',
     chipQuery: '',
   };
