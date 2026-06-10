@@ -164,6 +164,12 @@ export default function App() {
   }, []);
 
   const hasClips = useMemo(() => state.tracks.some((t) => t.clips.length), [state]);
+  // Stable inputProps reference: App re-renders ~60fps during playback (playhead
+  // sync), so a fresh `{ state }` object each render would force Remotion to
+  // re-render the whole video composition every frame, starving the Player's
+  // master clock and making the preview drift + snap back (~2s stutter).
+  // Memoizing keeps the composition driven only by the Player's own frame clock.
+  const playerInputProps = useMemo(() => ({ state }), [state]);
 
   const addClip = (trackId: string, clip: Clip) => {
     setState((s) => {
@@ -558,7 +564,7 @@ export default function App() {
               <Player
                 ref={playerRef}
                 component={TimelineComposition}
-                inputProps={{ state }}
+                inputProps={playerInputProps}
                 durationInFrames={state.durationInFrames}
                 fps={state.fps}
                 compositionWidth={state.width}
