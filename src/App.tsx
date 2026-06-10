@@ -7,7 +7,8 @@ import { Player, type PlayerRef } from '@remotion/player';
 import { TimelineComposition } from './editor/Composition';
 import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
-import type { Clip, EditorState, Track } from './editor/types';
+import type { Clip, EditorState, Track, TrackType } from './editor/types';
+import { MAX_TRACKS, relabelTracks } from './editor/types';
 import { health, importPath, exportTimeline, caption, toTimelineClip, type BridgeClip } from './api';
 import './App.css';
 
@@ -21,8 +22,10 @@ const emptyState = (): EditorState => ({
   height: 1080,
   durationInFrames: 300,
   tracks: [
-    { id: 'v1', label: 'V1', clips: [] },
-    { id: 'v2', label: 'V2', clips: [] },
+    { id: 'v1', type: 'video', label: 'V1', clips: [] },
+    { id: 'v2', type: 'video', label: 'V2', clips: [] },
+    { id: 'a1', type: 'audio', label: 'A1', clips: [] },
+    { id: 'a2', type: 'audio', label: 'A2', clips: [] },
   ],
 });
 
@@ -117,10 +120,10 @@ export default function App() {
       const clip = await importPath(p);
       setBin((b) => [clip, ...b]);
       setState((s) => {
-        const v1 = s.tracks.find((t) => t.id === 'v1')!;
-        const at = v1.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
+        const base = s.tracks.find((t) => t.type === 'video')!;
+        const at = base.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
         const tracks = s.tracks.map((t) =>
-          t.id === 'v1' ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
+          t.id === base.id ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
         );
         return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
       });
@@ -157,10 +160,38 @@ export default function App() {
     }
   };
 
-  // ── generated overlay → V2 at the playhead ──
+  // overlay graphics + captions go on the TOP video track (so they sit above
+  // the footage); falls back to the only video track if there's just one.
+  const overlayTrackId = () => {
+    const vids = state.tracks.filter((t) => t.type === 'video');
+    return (vids[vids.length - 1] || vids[0])?.id || 'v2';
+  };
+
+  // ── generated overlay → top video track at the playhead ──
   const onGenerated = (b: BridgeClip) => {
     setBin((x) => [b, ...x]);
-    addClip('v2', toTimelineClip(b, frame));
+    addClip(overlayTrackId(), toTimelineClip(b, frame));
+  };
+
+  // ── add / remove timeline tracks (right-click on a track header) ──
+  const addTrack = (type: TrackType) => {
+    setState((s) => {
+      if (s.tracks.length >= MAX_TRACKS) return s;
+      const newTrack: Track = { id: type[0] + Date.now().toString(36), type, label: '', clips: [] };
+      const vids = s.tracks.filter((t) => t.type === 'video');
+      const auds = s.tracks.filter((t) => t.type === 'audio');
+      const tracks = relabelTracks(
+        type === 'video' ? [...vids, newTrack, ...auds] : [...vids, ...auds, newTrack],
+      );
+      return { ...s, tracks };
+    });
+  };
+  const deleteTrack = (id: string) => {
+    setState((s) => {
+      if (s.tracks.length <= 1) return s;
+      const tracks = relabelTracks(s.tracks.filter((t) => t.id !== id));
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
   };
 
   // ── export ──
@@ -183,15 +214,17 @@ export default function App() {
   // ── auto-captions: transcribe V1 footage → animated caption track on V2 ──
   const [captioning, setCaptioning] = useState(false);
   const onCaption = async () => {
-    const v1 = state.tracks.find((t) => t.id === 'v1');
-    const clip = v1?.clips.find((c) => c.kind === 'video');
+    const clip = state.tracks
+      .filter((t) => t.type === 'video')
+      .flatMap((t) => t.clips)
+      .find((c) => c.kind === 'video');
     if (!clip) { setStatus('Import footage first'); return; }
     if (captioning) return;
     setCaptioning(true);
     setStatus('Auto-captioning — transcribing + rendering…');
     try {
       const cap = await caption(clip.id, 'tiktok');
-      addClip('v2', toTimelineClip(cap, clip.from));
+      addClip(overlayTrackId(), toTimelineClip(cap, clip.from));
       setStatus('Captions added to V2');
     } catch (e) {
       setStatus('Captions failed: ' + (e as Error).message);
@@ -297,6 +330,8 @@ export default function App() {
         selectedId={selectedId}
         onSelect={setSelectedId}
         onUpdateClip={updateClip}
+        onAddTrack={addTrack}
+        onDeleteTrack={deleteTrack}
       />
     </div>
   );

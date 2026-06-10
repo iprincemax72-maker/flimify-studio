@@ -2,7 +2,7 @@
 // <Player> previews live AND what @remotion/renderer exports to mp4 — one
 // composition, no preview/export split. Tracks layer bottom→top; clips are
 // time-positioned <Sequence>s.
-import { AbsoluteFill, OffthreadVideo, Sequence } from 'remotion';
+import { AbsoluteFill, Audio, OffthreadVideo, Sequence } from 'remotion';
 import type { Clip, EditorState } from './types';
 import { KineticTitle } from './overlays';
 
@@ -17,6 +17,9 @@ const ClipView: React.FC<{ clip: Clip }> = ({ clip }) => {
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />
     );
+  }
+  if (clip.kind === 'audio') {
+    return <Audio src={clip.src} trimBefore={clip.trimBefore} />;
   }
   return <KineticTitle text={clip.text} color={clip.color} />;
 };

@@ -1,7 +1,7 @@
 // The editor's single source of truth. The timeline IS a Remotion composition:
 // this state is passed to <Player> as inputProps for live preview, and the
-// SAME state renders to mp4 on export. Tracks stack bottom→top (V1 footage at
-// the base, V2/V3 AI overlays on top); each clip is a Remotion <Sequence>.
+// SAME state renders to mp4 on export. Video tracks stack bottom→top (V1 base,
+// higher V on top); audio tracks (A1, A2…) sit below. Each clip is a <Sequence>.
 
 export type ClipBase = {
   id: string;
@@ -28,11 +28,21 @@ export type TitleClip = ClipBase & {
   color?: string;
 };
 
-export type Clip = VideoClip | TitleClip;
+/** An audio-only clip on an A-track (music, voiceover). */
+export type AudioClip = ClipBase & {
+  kind: 'audio';
+  src: string;
+  trimBefore?: number;
+};
+
+export type Clip = VideoClip | TitleClip | AudioClip;
+
+export type TrackType = 'video' | 'audio';
 
 export type Track = {
   id: string;
-  label: string;     // V1, V2, V3…
+  type: TrackType;
+  label: string;     // V1, V2… / A1, A2…
   clips: Clip[];
 };
 
@@ -41,6 +51,17 @@ export type EditorState = {
   width: number;
   height: number;
   durationInFrames: number;
-  /** index 0 = bottom layer (base footage); later tracks render on top */
+  /** video tracks first (V1 = base), then audio tracks */
   tracks: Track[];
 };
+
+export const MAX_TRACKS = 100;
+
+/** Re-number track labels by type after add/delete (V1..Vn, A1..An). */
+export function relabelTracks(tracks: Track[]): Track[] {
+  let v = 0;
+  let a = 0;
+  return tracks.map((t) =>
+    t.type === 'video' ? { ...t, label: 'V' + ++v } : { ...t, label: 'A' + ++a },
+  );
+}
