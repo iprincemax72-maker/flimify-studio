@@ -15,15 +15,30 @@ const ScrubNumber: React.FC<{
 }> = ({ value, onChange, step = 1, min, max, dp = 0, suffix = '' }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const clamp = (v: number) => { if (min != null) v = Math.max(min, v); if (max != null) v = Math.min(max, v); return +v.toFixed(dp); };
+  const lim = (v: number) => { if (min != null) v = Math.max(min, v); if (max != null) v = Math.min(max, v); return v; };
+  const clamp = (v: number) => +lim(v).toFixed(dp);
   const commit = () => { const v = parseFloat(draft); if (!isNaN(v)) onChange(clamp(v)); setEditing(false); };
+  // Premiere-style scrub: pointer-lock hides the cursor, then drag up/right to
+  // raise and down/left to lower — infinitely (no edge limits).
   const onDown = (e: React.MouseEvent) => {
     e.preventDefault();
-    const startX = e.clientX, startV = value;
-    const move = (ev: MouseEvent) => onChange(clamp(startV + (ev.clientX - startX) * step));
-    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.classList.remove('scrubbing'); };
-    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    let acc = value;
+    const target = e.currentTarget as HTMLElement;
+    try { target.requestPointerLock?.(); } catch { /* ignore */ }
     document.body.classList.add('scrubbing');
+    const move = (ev: MouseEvent) => {
+      // up (-movementY) and right (+movementX) both increase the value
+      acc = lim(acc + ((ev.movementX || 0) - (ev.movementY || 0)) * step);
+      onChange(+acc.toFixed(dp));
+    };
+    const up = () => {
+      try { document.exitPointerLock?.(); } catch { /* ignore */ }
+      document.body.classList.remove('scrubbing');
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   };
   if (editing) {
     return <input className="fx-num-input" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }} />;
@@ -48,9 +63,24 @@ const Row: React.FC<{ label: string; onReset: () => void; children: React.ReactN
 export const EffectControls: React.FC<{
   clip: Clip | null;
   onChange: (patch: Partial<ClipTransform>) => void;
-}> = ({ clip, onChange }) => {
-  if (!clip || clip.kind === 'audio') {
-    return <div className="fx-empty">Select a clip on the timeline to edit its position, scale, rotation, and opacity.</div>;
+  onAudio: (gainDb: number) => void;
+}> = ({ clip, onChange, onAudio }) => {
+  if (!clip) {
+    return <div className="fx-empty">Select a clip on the timeline to edit it.</div>;
+  }
+  if (clip.kind === 'audio') {
+    const db = clip.gainDb ?? 0;
+    return (
+      <div className="fx">
+        <div className="fx-clip" title={clip.name}>{clip.name}</div>
+        <div className="fx-group">
+          <div className="fx-group-h">Volume</div>
+          <Row label="Level" onReset={() => onAudio(0)}>
+            <ScrubNumber value={db} onChange={onAudio} step={0.2} min={-60} max={12} dp={1} suffix=" dB" />
+          </Row>
+        </div>
+      </div>
+    );
   }
   const t = { ...DEFAULT_TRANSFORM, ...(clip.transform || {}) };
   return (

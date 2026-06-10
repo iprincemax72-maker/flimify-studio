@@ -89,6 +89,10 @@ export default function App() {
     const cur = { ...DEFAULT_TRANSFORM, ...(selected.clip.transform || {}) };
     updateClip(selected.trackId, selected.clip.id, { transform: { ...cur, ...patch } } as Partial<Clip>);
   };
+  const updateSelectedAudio = (gainDb: number) => {
+    if (!selected) return;
+    updateClip(selected.trackId, selected.clip.id, { gainDb } as Partial<Clip>);
+  };
 
   // persist panel sizes
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* ignore */ } }, [layout]);
@@ -168,26 +172,54 @@ export default function App() {
     });
   };
 
-  const updateClip = (trackId: string, clipId: string, patch: Partial<Clip>) => {
+  const updateClip = (_trackId: string, clipId: string, patch: Partial<Clip>) => {
     setState((s) => {
-      const tracks = s.tracks.map((t) =>
-        t.id === trackId
-          ? { ...t, clips: t.clips.map((c) => (c.id === clipId ? ({ ...c, ...patch } as Clip) : c)) }
-          : t,
-      );
+      // a linked clip mirrors its timeline geometry (from/dur/trim) onto its
+      // partner — unless the pair has been unlinked.
+      let linkId: string | undefined;
+      for (const t of s.tracks) for (const c of t.clips) if (c.id === clipId) { if (!c.unlinked) linkId = c.linkId; }
+      const geo = (p: Partial<Clip>): Partial<Clip> => {
+        const o: Partial<Clip> = {};
+        if (p.from != null) o.from = p.from;
+        if (p.durationInFrames != null) o.durationInFrames = p.durationInFrames;
+        if ('trimBefore' in p) (o as { trimBefore?: number }).trimBefore = (p as { trimBefore?: number }).trimBefore;
+        return o;
+      };
+      const mirror = linkId && (patch.from != null || patch.durationInFrames != null || 'trimBefore' in patch);
+      const tracks = s.tracks.map((t) => ({
+        ...t,
+        clips: t.clips.map((c) => {
+          if (c.id === clipId) return { ...c, ...patch } as Clip;
+          if (mirror && c.linkId === linkId && !c.unlinked) return { ...c, ...geo(patch) } as Clip;
+          return c;
+        }),
+      }));
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
     });
+  };
+
+  // link / unlink a footage video ↔ audio pair (right-click a clip)
+  const toggleLink = (clipId: string) => {
+    let linkId: string | undefined, cur = false;
+    for (const t of state.tracks) for (const c of t.clips) if (c.id === clipId) { linkId = c.linkId; cur = !!c.unlinked; }
+    if (!linkId) return;
+    const newUnlinked = !cur;
+    setState((s) => ({
+      ...s,
+      tracks: s.tracks.map((t) => ({ ...t, clips: t.clips.map((c) => (c.linkId === linkId ? ({ ...c, unlinked: newUnlinked } as Clip) : c)) })),
+    }));
+    toast(newUnlinked ? 'Unlinked video + audio.' : 'Linked video + audio.');
   };
 
   const deleteSelected = () => {
     if (!selectedId) return;
     setState((s) => {
-      // also remove a linked partner (footage video ↔ its split audio)
+      // also remove a linked partner (footage video ↔ its split audio) unless unlinked
       let linkId: string | undefined;
-      for (const t of s.tracks) for (const c of t.clips) if (c.id === selectedId) linkId = (c as { linkId?: string }).linkId;
+      for (const t of s.tracks) for (const c of t.clips) if (c.id === selectedId && !c.unlinked) linkId = c.linkId;
       const tracks = s.tracks.map((t) => ({
         ...t,
-        clips: t.clips.filter((c) => c.id !== selectedId && !(linkId && (c as { linkId?: string }).linkId === linkId)),
+        clips: t.clips.filter((c) => c.id !== selectedId && !(linkId && c.linkId === linkId && !c.unlinked)),
       }));
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
     });
@@ -513,7 +545,7 @@ export default function App() {
             </>
           ) : (
             <div className="fx-scroll">
-              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} />
+              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} onAudio={updateSelectedAudio} />
             </div>
           )}
         </aside>
@@ -576,6 +608,7 @@ export default function App() {
         onUpdateClip={updateClip}
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
+        onToggleLink={toggleLink}
       />
 
       {settingsOpen && (

@@ -23,6 +23,10 @@ export type ClipBase = {
   name: string;
   /** position / scale / rotation / opacity (Effect Controls) */
   transform?: ClipTransform;
+  /** links footage video ↔ its split audio (move/trim/delete together) */
+  linkId?: string;
+  /** true when the user has unlinked a linked pair (edit independently) */
+  unlinked?: boolean;
 };
 
 /** Imported footage, or a pre-rendered AI overlay (.mov) — both are video. */
@@ -33,8 +37,6 @@ export type VideoClip = ClipBase & {
   trimBefore?: number;
   /** mute the video's own audio (footage audio is split onto a linked A-clip) */
   muted?: boolean;
-  /** links footage video + its split audio clip so they delete together */
-  linkId?: string;
 };
 
 /** A live React/Remotion overlay (an AI graphic before it's flattened). */
@@ -49,9 +51,12 @@ export type AudioClip = ClipBase & {
   kind: 'audio';
   src: string;
   trimBefore?: number;
-  /** links split footage audio back to its video clip */
-  linkId?: string;
+  /** clip level in decibels (0 dB = unchanged; - quieter, + louder) */
+  gainDb?: number;
 };
+
+/** decibels → linear gain for Remotion <Audio volume>. 0 dB = 1.0. */
+export const dbToGain = (db: number) => Math.pow(10, db / 20);
 
 export type Clip = VideoClip | TitleClip | AudioClip;
 

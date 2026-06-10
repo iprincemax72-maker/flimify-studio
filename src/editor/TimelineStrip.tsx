@@ -19,7 +19,7 @@ type Drag = {
   startX: number; startFrom: number; startDur: number; startTrim: number | null;
 };
 
-type Menu = { x: number; y: number; trackId: string } | null;
+type Menu = { x: number; y: number; trackId?: string; clip?: Clip } | null;
 
 export const TimelineStrip: React.FC<{
   state: EditorState;
@@ -30,7 +30,8 @@ export const TimelineStrip: React.FC<{
   onUpdateClip: (trackId: string, clipId: string, patch: Patch) => void;
   onAddTrack: (type: TrackType) => void;
   onDeleteTrack: (trackId: string) => void;
-}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack }) => {
+  onToggleLink: (clipId: string) => void;
+}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
@@ -73,12 +74,23 @@ export const TimelineStrip: React.FC<{
     return () => { document.removeEventListener('click', close); document.removeEventListener('contextmenu', close); };
   }, [menu]);
 
+  // Grab anywhere on the timeline/ruler to move the playhead, and keep dragging
+  // to scrub — like Premiere. (Clicking a clip selects it; clicking a label is
+  // handled separately — both stopPropagation.)
   const seekFromEvent = (e: React.MouseEvent) => {
     const el = wrapRef.current;
     if (!el) return;
     onSelect(null);
-    const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft - LABEL_W;
-    onSeek(Math.max(0, Math.min(state.durationInFrames, Math.round(x / PX_PER_FRAME))));
+    const seekAt = (clientX: number) => {
+      const x = clientX - el.getBoundingClientRect().left + el.scrollLeft - LABEL_W;
+      onSeek(Math.max(0, Math.min(state.durationInFrames, Math.round(x / PX_PER_FRAME))));
+    };
+    seekAt(e.clientX);
+    const move = (ev: MouseEvent) => seekAt(ev.clientX);
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.classList.remove('scrubbing-ph'); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    document.body.classList.add('scrubbing-ph');
   };
 
   const onClipDown = (e: React.MouseEvent, trackId: string, clip: Clip) => {
@@ -99,6 +111,12 @@ export const TimelineStrip: React.FC<{
     e.preventDefault();
     e.stopPropagation();
     setMenu({ x: e.clientX, y: e.clientY, trackId });
+  };
+  const onClipMenu = (e: React.MouseEvent, trackId: string, clip: Clip) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect(clip.id);
+    setMenu({ x: e.clientX, y: e.clientY, trackId, clip });
   };
 
   const ticks: number[] = [];
@@ -136,11 +154,13 @@ export const TimelineStrip: React.FC<{
               {track.clips.map((clip) => (
                 <div
                   key={clip.id}
-                  className={'tl-clip ' + clip.kind + (selectedId === clip.id ? ' sel' : '')}
+                  className={'tl-clip ' + clip.kind + (selectedId === clip.id ? ' sel' : '') + (clip.linkId && !clip.unlinked ? ' linked' : '')}
                   style={{ left: LABEL_W + clip.from * PX_PER_FRAME, width: clip.durationInFrames * PX_PER_FRAME }}
                   title={clip.name}
                   onMouseDown={(e) => onClipDown(e, track.id, clip)}
+                  onContextMenu={(e) => onClipMenu(e, track.id, clip)}
                 >
+                  {clip.linkId && !clip.unlinked && <span className="tl-link" title="Linked">🔗</span>}
                   <span>{clip.name}</span>
                 </div>
               ))}
@@ -156,10 +176,22 @@ export const TimelineStrip: React.FC<{
 
       {menu && (
         <div className="tl-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          <button disabled={atMax} onClick={() => { onAddTrack('video'); setMenu(null); }}>Add video track</button>
-          <button disabled={atMax} onClick={() => { onAddTrack('audio'); setMenu(null); }}>Add audio track</button>
-          <button className="danger" disabled={state.tracks.length <= 1} onClick={() => { onDeleteTrack(menu.trackId); setMenu(null); }}>Delete this track</button>
-          {atMax && <div className="tl-menu-note">Max {MAX_TRACKS} tracks</div>}
+          {menu.clip ? (
+            menu.clip.linkId ? (
+              <button onClick={() => { onToggleLink(menu.clip!.id); setMenu(null); }}>
+                {menu.clip.unlinked ? '🔗 Link video + audio' : '⛓ Unlink video + audio'}
+              </button>
+            ) : (
+              <div className="tl-menu-note">This clip has no linked audio/video</div>
+            )
+          ) : (
+            <>
+              <button disabled={atMax} onClick={() => { onAddTrack('video'); setMenu(null); }}>Add video track</button>
+              <button disabled={atMax} onClick={() => { onAddTrack('audio'); setMenu(null); }}>Add audio track</button>
+              <button className="danger" disabled={state.tracks.length <= 1} onClick={() => { onDeleteTrack(menu.trackId!); setMenu(null); }}>Delete this track</button>
+              {atMax && <div className="tl-menu-note">Max {MAX_TRACKS} tracks</div>}
+            </>
+          )}
         </div>
       )}
     </div>

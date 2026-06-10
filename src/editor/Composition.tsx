@@ -3,12 +3,12 @@
 // composition, no preview/export split. Tracks layer bottom→top; clips are
 // time-positioned <Sequence>s.
 import { AbsoluteFill, Audio, OffthreadVideo, Sequence } from 'remotion';
-import { DEFAULT_TRANSFORM, type Clip, type EditorState } from './types';
+import { DEFAULT_TRANSFORM, dbToGain, type Clip, type EditorState } from './types';
 import { KineticTitle } from './overlays';
 
 const ClipView: React.FC<{ clip: Clip }> = ({ clip }) => {
   if (clip.kind === 'audio') {
-    return <Audio src={clip.src} trimBefore={clip.trimBefore} />;
+    return <Audio src={clip.src} trimBefore={clip.trimBefore} volume={dbToGain(clip.gainDb ?? 0)} />;
   }
   // visual clips honour the Effect-Controls transform (position/scale/rotation/opacity)
   const t = clip.transform || DEFAULT_TRANSFORM;
