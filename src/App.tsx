@@ -7,8 +7,9 @@ import { Player, type PlayerRef } from '@remotion/player';
 import { TimelineComposition } from './editor/Composition';
 import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
-import type { Clip, EditorState, Track, TrackType } from './editor/types';
-import { MAX_TRACKS, relabelTracks } from './editor/types';
+import type { Clip, ClipTransform, EditorState, Track, TrackType } from './editor/types';
+import { MAX_TRACKS, DEFAULT_TRANSFORM, relabelTracks } from './editor/types';
+import { EffectControls } from './panels/EffectControls';
 import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
@@ -72,7 +73,22 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inject, setInject] = useState<{ text: string; id: number } | null>(null);
   const [layout, setLayout] = useState<Layout>(loadLayout);
+  const [leftTab, setLeftTab] = useState<'media' | 'fx'>('media');
   const playerRef = useRef<PlayerRef>(null);
+
+  // the selected clip + which track it's on (for Effect Controls)
+  const selected = useMemo(() => {
+    if (!selectedId) return null;
+    for (const t of state.tracks) for (const c of t.clips) if (c.id === selectedId) return { clip: c, trackId: t.id };
+    return null;
+  }, [state, selectedId]);
+  // jump to Effect Controls when a clip is selected
+  useEffect(() => { if (selectedId) setLeftTab('fx'); }, [selectedId]);
+  const updateSelectedTransform = (patch: Partial<ClipTransform>) => {
+    if (!selected) return;
+    const cur = { ...DEFAULT_TRANSFORM, ...(selected.clip.transform || {}) };
+    updateClip(selected.trackId, selected.clip.id, { transform: { ...cur, ...patch } } as Partial<Clip>);
+  };
 
   // persist panel sizes
   useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* ignore */ } }, [layout]);
@@ -478,17 +494,28 @@ export default function App() {
 
       <div className="work" style={{ gridTemplateColumns: `${layout.leftW}px 6px minmax(0,1fr) 6px ${layout.rightW}px` }}>
         <aside className="panel bin">
-          <div className="panel-h">Media</div>
-          <div className="bin-list">
-            {bin.length === 0 && <div className="bin-empty">No media yet</div>}
-            {bin.map((c) => (
-              <div className="bin-item" key={c.id}>
-                <div className="bin-thumb" />
-                <div className="bin-meta"><b>{c.name}</b><span>{c.width}×{c.height}</span></div>
-              </div>
-            ))}
+          <div className="panel-h panel-tabs">
+            <button className={leftTab === 'media' ? 'on' : ''} onClick={() => setLeftTab('media')}>Media</button>
+            <button className={leftTab === 'fx' ? 'on' : ''} onClick={() => setLeftTab('fx')}>Effect Controls</button>
           </div>
-          <button className="bin-import" onClick={onImport}>+ Import video</button>
+          {leftTab === 'media' ? (
+            <>
+              <div className="bin-list">
+                {bin.length === 0 && <div className="bin-empty">No media yet</div>}
+                {bin.map((c) => (
+                  <div className="bin-item" key={c.id}>
+                    <div className="bin-thumb" />
+                    <div className="bin-meta"><b>{c.name}</b><span>{c.width}×{c.height}</span></div>
+                  </div>
+                ))}
+              </div>
+              <button className="bin-import" onClick={onImport}>+ Import video</button>
+            </>
+          ) : (
+            <div className="fx-scroll">
+              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} />
+            </div>
+          )}
         </aside>
 
         <div className="splitter-v" onMouseDown={(e) => onSplitterDown(e, 'left')} onDoubleClick={resetLayout} title="Drag to resize · double-click to reset" />

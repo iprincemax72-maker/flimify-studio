@@ -3,6 +3,16 @@
 // SAME state renders to mp4 on export. Video tracks stack bottom→top (V1 base,
 // higher V on top); audio tracks (A1, A2…) sit below. Each clip is a <Sequence>.
 
+/** Effect-controls transform applied to a visual clip (Premiere-style). */
+export type ClipTransform = {
+  x: number;        // position offset from centre, in composition px
+  y: number;
+  scale: number;    // percent (100 = original)
+  rotation: number; // degrees
+  opacity: number;  // percent (100 = opaque)
+};
+export const DEFAULT_TRANSFORM: ClipTransform = { x: 0, y: 0, scale: 100, rotation: 0, opacity: 100 };
+
 export type ClipBase = {
   id: string;
   /** start frame on the timeline */
@@ -11,6 +21,8 @@ export type ClipBase = {
   durationInFrames: number;
   /** display name in the timeline block */
   name: string;
+  /** position / scale / rotation / opacity (Effect Controls) */
+  transform?: ClipTransform;
 };
 
 /** Imported footage, or a pre-rendered AI overlay (.mov) — both are video. */
