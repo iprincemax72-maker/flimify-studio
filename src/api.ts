@@ -88,6 +88,11 @@ export async function authSignOut(): Promise<AuthStatus> {
   await fetch(BRIDGE + '/auth/signout', { method: 'POST' });
   return authStatus();
 }
+/** Clear an explicit sign-out + pick up a shared (extension) session if present. */
+export async function authReconnect(): Promise<AuthStatus> {
+  const r = await fetch(BRIDGE + '/auth/reconnect', { method: 'POST' });
+  return r.json();
+}
 
 export async function generate(
   prompt: string,

@@ -4,7 +4,7 @@
 // load (no re-login). "Sign in with Google" opens the bridge's /connect OAuth
 // page in the browser, then polls until signed in.
 import { useEffect, useRef, useState } from 'react';
-import { authStatus, authSignOut, BRIDGE, type AuthStatus } from '../api';
+import { authStatus, authSignOut, authReconnect, BRIDGE, type AuthStatus } from '../api';
 import { toast } from '../ui/feedback';
 
 const openUrl = (url: string) => { try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ } };
@@ -27,8 +27,11 @@ export const Account: React.FC = () => {
 
   const dashboard = () => openUrl(status?.dashboard || 'https://www.flimify.com/account.html');
 
-  const signIn = () => {
-    openUrl(BRIDGE + '/connect?reauth=1');  // Supabase Google OAuth in the browser
+  const signIn = async () => {
+    // First, undo an explicit sign-out + reuse the extension session if present
+    // (instant, no browser round-trip).
+    try { const s = await authReconnect(); if (s.signedIn) { setStatus(s); toast('Signed in as ' + (s.name || s.email) + '.'); return; } } catch { /* ignore */ }
+    openUrl(BRIDGE + '/connect?reauth=1');  // else: Supabase Google OAuth in the browser
     setPending(true);
     let tries = 0;
     clearInterval(pollRef.current);

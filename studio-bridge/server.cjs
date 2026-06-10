@@ -601,17 +601,31 @@ const OWNER_EMAILS = (process.env.OWNER_EMAILS || 'iprincemax72@gmail.com,anshdh
 const SESSION_FILE = path.join(STUDIO_DIR, 'session.json');
 // also read the Premiere extension's session — sign in there → signed in here too
 const SHARED_SESSION_FILES = [path.join(HOME, 'PremiereClaude', 'session.json'), path.join(HOME, '.premiere-claude', 'session.json')];
+// Explicit Studio sign-out marker. When present, we do NOT fall back to the
+// shared extension session (otherwise sign-out would do nothing). Signing in
+// again removes it.
+const SIGNED_OUT_MARKER = path.join(STUDIO_DIR, '.signedout');
 
 let _session = null;
 function loadSession() {
   if (_session && _session.access_token) return _session;
+  // honor an explicit Studio sign-out: don't auto-read any shared session
+  try { if (fs.existsSync(SIGNED_OUT_MARKER)) return null; } catch {}
   for (const f of [SESSION_FILE, ...SHARED_SESSION_FILES]) {
     try { if (fs.existsSync(f)) { const s = JSON.parse(fs.readFileSync(f, 'utf8')); if (s && s.access_token) { _session = s; return s; } } } catch {}
   }
   return null;
 }
-function saveSession(s) { _session = s; try { fs.writeFileSync(SESSION_FILE, JSON.stringify(s), { mode: 0o600 }); } catch {} }
-function clearSession() { _session = null; try { fs.unlinkSync(SESSION_FILE); } catch {} }
+function saveSession(s) {
+  _session = s;
+  try { fs.unlinkSync(SIGNED_OUT_MARKER); } catch {}   // signing in clears the sign-out marker
+  try { fs.writeFileSync(SESSION_FILE, JSON.stringify(s), { mode: 0o600 }); } catch {}
+}
+function clearSession() {
+  _session = null;
+  try { fs.unlinkSync(SESSION_FILE); } catch {}
+  try { fs.writeFileSync(SIGNED_OUT_MARKER, '1'); } catch {}   // sticks across the shared-session fallback
+}
 
 let _refreshing = null;
 async function freshToken() {
@@ -731,6 +745,14 @@ const server = http.createServer(async (req, res) => {
     clearSession();
     log('signed out');
     return sendJson(res, 200, { ok: true });
+  }
+  // Clear the explicit sign-out so a shared (extension) session is picked up again.
+  if (req.method === 'POST' && u === '/auth/reconnect') {
+    try { fs.unlinkSync(SIGNED_OUT_MARKER); } catch {}
+    _session = null;
+    const st = await authStatus();
+    if (st.signedIn) log('reconnected: ' + st.email);
+    return sendJson(res, 200, st);
   }
   if (req.method === 'GET' && (u === '/connect' || u.startsWith('/connect?'))) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
