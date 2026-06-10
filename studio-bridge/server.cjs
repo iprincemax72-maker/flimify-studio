@@ -24,6 +24,9 @@ const RENDER_DIR = path.join(STUDIO_DIR, 'renders');
 const WORK_DIR = path.join(STUDIO_DIR, 'work');
 const REGISTRY = path.join(STUDIO_DIR, 'registry.json');
 const RENDER_PROJECT = process.env.FLIMIFY_RENDER_PROJECT || path.join(HOME, 'PremiereClaude', 'remotion-intro');
+// Web mode: the bridge can also host the built editor (dist/) so the app runs
+// in a plain browser at http://localhost:3939/app — same local Claude, no key.
+const DIST_DIR = process.env.FLIMIFY_DIST_DIR || path.join(__dirname, '..', 'dist');
 // ── PATH repair (CRITICAL) ─────────────────────────────────────────────────
 // A GUI-launched macOS app inherits a sparse PATH (/usr/bin:/bin:/usr/sbin:
 // /sbin) — it does NOT include /opt/homebrew/bin or ~/.local/bin. So a bridge
@@ -158,6 +161,39 @@ function serveMedia(req, res, id) {
     res.writeHead(200, { ...cors, 'Content-Type': type, 'Content-Length': total });
     fs.createReadStream(entry.path).pipe(res);
   }
+}
+
+// Serve a static file from dist/ (web mode). SPA-friendly: unknown /app paths
+// fall back to index.html.
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.map': 'application/json' };
+function serveStatic(res, rel) {
+  let file = path.join(DIST_DIR, rel);
+  // prevent path traversal
+  if (!path.resolve(file).startsWith(path.resolve(DIST_DIR))) { res.writeHead(403); return res.end(); }
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST_DIR, 'index.html');
+  if (!fs.existsSync(file)) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end('<h2>Flimify Studio — web</h2><p>No build found. Run <code>npm run build</code> first, then reload.</p>');
+  }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
+  fs.createReadStream(file).pipe(res);
+}
+
+// Browser upload (web mode): raw file body + X-Filename header → saved + probed.
+function handleUpload(req, res) {
+  const name = String(req.headers['x-filename'] || 'upload.mp4').replace(/[^\w.\- ]/g, '_').slice(0, 120);
+  const dest = path.join(MEDIA_DIR, Date.now().toString(36) + '_' + name);
+  const ws = fs.createWriteStream(dest);
+  req.pipe(ws);
+  ws.on('finish', async () => {
+    const meta = await probe(dest);
+    if (!meta) { try { fs.unlinkSync(dest); } catch {} return sendJson(res, 422, { error: 'could not read media' }); }
+    const id = register(dest, name);
+    log('upload', name, `${meta.width}x${meta.height}`);
+    sendJson(res, 200, { ok: true, clip: clipFromProbe(id, name, meta) });
+  });
+  ws.on('error', (e) => { try { fs.unlinkSync(dest); } catch {} sendJson(res, 500, { error: 'upload failed: ' + e.message }); });
+  req.on('error', () => { try { ws.destroy(); fs.unlinkSync(dest); } catch {} });
 }
 
 function register(file, name) {
@@ -550,7 +586,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
     return res.end();
   }
-  if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT });
+  if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT, web: fs.existsSync(DIST_DIR) });
+  // ── web mode: host the built editor ──
+  if (req.method === 'GET' && (u === '/' || u === '/app' || u.startsWith('/app/'))) {
+    return serveStatic(res, u === '/' || u === '/app' || u === '/app/' ? 'index.html' : u.replace(/^\/app\//, ''));
+  }
+  if (req.method === 'GET' && /^\/(assets\/|favicon\.|apple-touch-icon|icons\.svg|vite\.svg)/.test(u)) {
+    return serveStatic(res, u.replace(/^\//, ''));
+  }
+  if (req.method === 'POST' && u === '/upload') return handleUpload(req, res);
   if (req.method === 'GET' && u.startsWith('/progress-stream')) {
     const reqId = new URL(u, 'http://x').searchParams.get('reqId');
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });

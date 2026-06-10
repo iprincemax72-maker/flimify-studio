@@ -59,6 +59,21 @@ export async function importPath(path: string): Promise<BridgeClip> {
   return clip;
 }
 
+/** Web-mode import: upload a File (browser can't hand the bridge a path). */
+export async function uploadVideo(file: File): Promise<BridgeClip> {
+  const r = await fetch(BRIDGE + '/upload', {
+    method: 'POST',
+    body: file,
+    headers: { 'X-Filename': file.name },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'upload ' + r.status);
+  return (j as { clip: BridgeClip }).clip;
+}
+
+/** True when running inside the Electron desktop shell (vs a plain browser). */
+export const isDesktop = () => !!(window.flimify && window.flimify.isDesktop);
+
 export async function generate(
   prompt: string,
   engine: 'remotion' | 'hyperframes',

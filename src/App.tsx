@@ -9,7 +9,7 @@ import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
 import type { Clip, EditorState, Track, TrackType } from './editor/types';
 import { MAX_TRACKS, relabelTracks } from './editor/types';
-import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
+import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { CaptionsModal } from './panels/CaptionsModal';
@@ -22,8 +22,6 @@ import { FeedbackHost, toast, confirmDialog, openLightbox } from './ui/feedback'
 import './App.css';
 
 const FPS = 30;
-// Dev fallback when not running in Electron (so import is testable in a browser).
-const DEV_SAMPLE = '/Users/anshdhakad/All Claude Work/flimify-studio/public/sample.mp4';
 
 const emptyState = (): EditorState => ({
   fps: FPS,
@@ -153,31 +151,45 @@ export default function App() {
   }, [selectedId]);
 
   // ── import footage (shared by the button, menu, and drag-drop) ──
+  // land a freshly-imported/uploaded clip onto the bin + the base video track
+  const landImportedClip = (clip: BridgeClip) => {
+    setBin((b) => [clip, ...b]);
+    addHistory(clip, 'import');
+    setState((s) => {
+      const base = s.tracks.find((t) => t.type === 'video')!;
+      const at = base.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
+      const tracks = s.tracks.map((t) =>
+        t.id === base.id ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
+      );
+      return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+  };
   const importByPath = async (p: string) => {
     setStatus('Importing…');
-    try {
-      const clip = await importPath(p);
-      setBin((b) => [clip, ...b]);
-      addHistory(clip, 'import');
-      setState((s) => {
-        const base = s.tracks.find((t) => t.type === 'video')!;
-        const at = base.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
-        const tracks = s.tracks.map((t) =>
-          t.id === base.id ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
-        );
-        return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
-      });
-      setStatus('');
-    } catch (e) {
-      setStatus('Import failed: ' + (e as Error).message);
-    }
+    try { landImportedClip(await importPath(p)); setStatus(''); }
+    catch (e) { setStatus('Import failed: ' + (e as Error).message); toast('Import failed: ' + (e as Error).message, true); }
+  };
+  // web mode: upload the File to the bridge (browser has no file path)
+  const importByUpload = async (file: File) => {
+    setStatus('Uploading…');
+    try { landImportedClip(await uploadVideo(file)); setStatus(''); toast('Imported “' + file.name + '”.'); }
+    catch (e) { setStatus('Upload failed: ' + (e as Error).message); toast('Upload failed: ' + (e as Error).message, true); }
   };
 
+  // hidden <input> drives import in the browser (no native dialog)
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const onImport = async () => {
-    let p: string | null = null;
-    if (window.flimify?.openVideo) p = await window.flimify.openVideo();
-    else p = DEV_SAMPLE; // browser dev fallback
-    if (p) await importByPath(p);
+    if (window.flimify?.openVideo) {
+      const p = await window.flimify.openVideo();
+      if (p) await importByPath(p);
+    } else {
+      fileInputRef.current?.click(); // web / browser
+    }
+  };
+  const onFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    for (const f of files) await importByUpload(f);
+    e.target.value = '';
   };
 
   // ── drag-and-drop video files anywhere onto the editor ──
@@ -189,8 +201,8 @@ export default function App() {
     const files = Array.from(e.dataTransfer?.files || []).filter(isVideo);
     for (const f of files) {
       const p = window.flimify?.getPathForFile?.(f) || (f as unknown as { path?: string }).path;
-      if (p) await importByPath(p);
-      else setStatus('Drag-drop import needs the desktop app');
+      if (p) await importByPath(p);    // desktop — fast, no copy
+      else await importByUpload(f);     // web — upload the bytes
     }
   };
   const onDragOver = (e: React.DragEvent) => {
@@ -375,6 +387,7 @@ export default function App() {
     >
       <div className="aurora" aria-hidden />
       <canvas id="particleCanvas" aria-hidden />
+      <input ref={fileInputRef} type="file" accept="video/*" multiple hidden onChange={onFilePicked} />
       {booting && (
         <div className="boot-intro" onClick={() => setBooting(false)}>
           <div className="boot-mark">F</div>

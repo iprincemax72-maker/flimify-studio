@@ -11,6 +11,7 @@
     "app": "concurrently -k -n vite,electron -c blue,magenta \"vite\" \"wait-on http://localhost:5191 && electron .\"",
     "build": "tsc -b && vite build",
     "build:app": "npm run build && electron-builder",
+    "web": "npm run build && node studio-bridge/server.cjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

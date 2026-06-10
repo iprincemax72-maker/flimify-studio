@@ -145,7 +145,8 @@ body { background: transparent; color: var(--text); overflow: hidden; }
 .bin-meta b { font-size: 13px; }
 .bin-meta span { font-size: 11px; color: var(--dim); }
 .bin-import { margin: 8px 12px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px;
-  background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: not-allowed; }
+  background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+.bin-import:hover { border-color: var(--accent-line); color: var(--text); }
 
 /* preview stage */
 .stage { display: flex; flex-direction: column; min-height: 0; background: #050506; }
