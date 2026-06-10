@@ -12,8 +12,10 @@ import { MAX_TRACKS, relabelTracks } from './editor/types';
 import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
-import { loadSettings, saveSettings, applySettings, aspectDims, type Settings } from './settings';
+import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, type Settings } from './settings';
+import { configureParticles } from './particles';
 import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
+import { FeedbackHost, toast, confirmDialog } from './ui/feedback';
 import './App.css';
 
 const FPS = 30;
@@ -66,9 +68,22 @@ export default function App() {
     });
   };
 
-  // apply + persist appearance/defaults live
-  useEffect(() => { applySettings(settings); saveSettings(settings); }, [settings]);
+  // apply + persist appearance/defaults live (incl. accent-tinted particles)
+  useEffect(() => {
+    applySettings(settings);
+    saveSettings(settings);
+    const rgb = (ACCENT_PALETTES[settings.accent] || ACCENT_PALETTES.coral).rgb;
+    configureParticles(settings.particles, rgb);
+  }, [settings]);
   const patchSettings = (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch }));
+
+  // boot-intro splash (once per launch, respecting the setting)
+  const [booting, setBooting] = useState(() => loadSettings().bootIntro);
+  useEffect(() => {
+    if (!booting) return;
+    const t = setTimeout(() => setBooting(false), 1400);
+    return () => clearTimeout(t);
+  }, [booting]);
 
   // bridge health
   useEffect(() => {
@@ -225,9 +240,11 @@ export default function App() {
     try {
       const out = await exportTimeline(state, 'flimify-export');
       setStatus('Exported → ' + out);
+      toast('Exported → ' + out.split('/').pop());
       window.flimify?.revealFile?.(out);
     } catch (e) {
       setStatus('Export failed: ' + (e as Error).message);
+      toast('Export failed: ' + (e as Error).message, true);
     } finally {
       setExporting(false);
     }
@@ -266,6 +283,12 @@ export default function App() {
     addClip(trackId, toTimelineClip(clip, e.kind === 'import' ? 0 : frame));
   };
   const onHistoryDelete = async (e: HistoryEntry) => {
+    const ok = await confirmDialog({
+      title: 'Delete this render?',
+      message: 'Removes “' + e.name + '” from disk and from history. This can’t be undone.',
+      okLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
     try { await deleteMedia(e.id); } catch { /* ignore — still drop from UI */ }
     setHistory((h) => { const n = h.filter((x) => x.id !== e.id); saveHistory(n); return n; });
     setBin((b) => b.filter((c) => c.id !== e.id));
@@ -273,6 +296,7 @@ export default function App() {
       const tracks = s.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => !('src' in c) || c.src !== e.src) }));
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
     });
+    toast('Deleted “' + e.name + '”.');
   };
 
   const seek = (f: number) => playerRef.current?.seekTo(f);
@@ -295,6 +319,14 @@ export default function App() {
       onDragLeave={(e) => { if (e.clientX === 0 && e.clientY === 0) setDragging(false); }}
       onDrop={onDrop}
     >
+      <div className="aurora" aria-hidden />
+      <canvas id="particleCanvas" aria-hidden />
+      {booting && (
+        <div className="boot-intro" onClick={() => setBooting(false)}>
+          <div className="boot-mark">F</div>
+          <div className="boot-word">Flimify <span>Studio</span></div>
+        </div>
+      )}
       {dragging && (
         <div className="drop-overlay" onDragLeave={() => setDragging(false)}>
           <div className="drop-card">Drop video to import</div>
@@ -394,6 +426,7 @@ export default function App() {
       {historyOpen && (
         <HistoryPanel history={history} onClose={() => setHistoryOpen(false)} onAdd={onHistoryAdd} onDelete={onHistoryDelete} />
       )}
+      <FeedbackHost />
     </div>
   );
 }

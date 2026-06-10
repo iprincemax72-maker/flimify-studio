@@ -5,20 +5,26 @@
 export type Settings = {
   theme: string;
   accent: string;
+  particles: 'off' | 'dust' | 'bokeh' | 'stars' | 'network';
+  bootIntro: boolean;
   aspect: 'auto' | '9:16' | '16:9' | '1:1';
   duration: 'auto' | '3' | '5' | '10' | '15' | '30';
   engine: 'remotion' | 'hyperframes';
   versions: '1' | '2' | '3' | '5' | 'all';
+  expand: 'light' | 'medium' | 'heavy';
   confirmImport: boolean;
 };
 
 export const SETTINGS_DEFAULTS: Settings = {
   theme: 'dark',
   accent: 'coral',
+  particles: 'dust',
+  bootIntro: true,
   aspect: 'auto',
   duration: 'auto',
   engine: 'remotion',
-  versions: '1',
+  versions: '3',
+  expand: 'light',
   confirmImport: false,
 };
 
