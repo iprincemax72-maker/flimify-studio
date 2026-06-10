@@ -64,7 +64,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 /* work area */
 .work {
   display: grid;
-  grid-template-columns: 220px 1fr 300px;
+  grid-template-columns: 270px 1fr 380px;
   min-height: 0;
 }
 .panel { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
@@ -234,3 +234,11 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 .hist-actions button { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: 11.5px; padding: 6px; border-radius: 7px; cursor: pointer; }
 .hist-actions button:hover { border-color: var(--accent); }
 .hist-actions button.danger:hover { border-color: #d7462e; color: #ff9a86; }
+
+/* render-mode pills (Fast/Default/Slow) */
+.fp-mode { display: flex; gap: 4px; padding: 0 12px 6px; }
+.fp-mode button {
+  flex: 1; border: 1px solid var(--line); background: transparent; color: var(--dim);
+  font: inherit; font-size: 10.5px; font-weight: 600; padding: 4px; border-radius: 6px; cursor: pointer;
+}
+.fp-mode button.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }

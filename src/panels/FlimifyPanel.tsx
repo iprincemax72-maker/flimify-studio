@@ -15,6 +15,7 @@ export const FlimifyPanel: React.FC<{
 }> = ({ width, height, durationSec = 4, defaultEngine = 'remotion', onClip }) => {
   const [prompt, setPrompt] = useState('');
   const [engine, setEngine] = useState<Engine>(defaultEngine);
+  const [mode, setMode] = useState<'fast' | 'default' | 'slow'>('default');
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<{ role: 'you' | 'flimify'; text: string }[]>([
     { role: 'flimify', text: 'Describe a graphic — a lower-third, a title, a callout. I’ll generate it and drop it on the timeline.' },
@@ -28,7 +29,7 @@ export const FlimifyPanel: React.FC<{
     setBusy(true);
     setLog((l) => [...l, { role: 'flimify', text: 'Generating… (running on your Claude — no API key)' }]);
     try {
-      const clip = await generate(p, engine, width, height, durationSec);
+      const clip = await generate(p, engine, width, height, durationSec, mode);
       onClip(clip);
       setLog((l) => [...l.slice(0, -1), { role: 'flimify', text: '✓ Added “' + clip.name + '” to V2.' }]);
     } catch (e) {
@@ -43,6 +44,13 @@ export const FlimifyPanel: React.FC<{
       <div className="fp-engine">
         <button className={engine === 'remotion' ? 'on' : ''} onClick={() => setEngine('remotion')}>Remotion</button>
         <button className={engine === 'hyperframes' ? 'on' : ''} onClick={() => setEngine('hyperframes')}>HyperFrames</button>
+      </div>
+      <div className="fp-mode">
+        {(['fast', 'default', 'slow'] as const).map((m) => (
+          <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)} title={m === 'fast' ? 'Quick, simple' : m === 'slow' ? 'Layered, polished (slower)' : 'A real custom graphic'}>
+            {m[0].toUpperCase() + m.slice(1)}
+          </button>
+        ))}
       </div>
       <div className="fp-log">
         {log.map((m, i) => (

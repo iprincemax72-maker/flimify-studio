@@ -63,9 +63,10 @@ export async function generate(
   width: number,
   height: number,
   durationSec: number,
+  mode: 'fast' | 'default' | 'slow' = 'default',
 ): Promise<BridgeClip> {
   const { clip } = await post<{ clip: BridgeClip }>('/generate', {
-    prompt, engine, width, height, durationSec,
+    prompt, engine, width, height, durationSec, mode,
   });
   return clip;
 }

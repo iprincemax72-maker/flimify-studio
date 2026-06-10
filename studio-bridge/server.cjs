@@ -168,8 +168,13 @@ function deleteMedia(id) {
 // Compact system prompt: build a TRANSPARENT motion-graphic overlay and render
 // ProRes 4444 .mov to an exact path, then emit [[IMPORT:path]]. Mirrors the
 // extension's proven recipe.
-function genSystemPrompt(engine, w, h, durSec, outFile) {
-  const common = `You are generating ONE transparent motion-graphic OVERLAY for a video editor. It sits on a track ABOVE the footage, so it MUST have a fully transparent background — only the graphic elements are visible. Canvas ${w}x${h}, 30fps, about ${durSec.toFixed(1)} seconds. Animate in quickly, hold readable, exit at the end. Keep text within the centre safe area.`;
+function modeLine(mode) {
+  if (mode === 'fast') return ' Keep it to ONE clean, simple move — quick and tasteful, no over-design.';
+  if (mode === 'slow') return ' Make it a layered, choreographed, polished piece — multiple coordinated elements, refined easing, premium detailing.';
+  return ' A real, custom-built graphic — considered composition, motion and type.';
+}
+function genSystemPrompt(engine, w, h, durSec, outFile, mode) {
+  const common = `You are generating ONE transparent motion-graphic OVERLAY for a video editor. It sits on a track ABOVE the footage, so it MUST have a fully transparent background — only the graphic elements are visible. Canvas ${w}x${h}, 30fps, about ${durSec.toFixed(1)} seconds. Animate in quickly, hold readable, exit at the end. Keep text within the centre safe area.` + modeLine(mode);
   if (engine === 'hyperframes') {
     return `${common}
 
@@ -186,11 +191,11 @@ Build a FRESH Remotion composition (transparent — no opaque background Absolut
 ProRes 4444 + yuva444p10le is required so the alpha survives. When done, emit: [[IMPORT:${outFile}]]`;
 }
 
-function generate({ prompt, engine, width, height, durationSec }, onStatus) {
+function generate({ prompt, engine, width, height, durationSec, mode }, onStatus) {
   return new Promise((resolve) => {
     const w = width || 1920, h = height || 1080, durSec = durationSec || 4;
     const outFile = path.join(RENDER_DIR, 'gen_' + Date.now().toString(36) + '.mov');
-    const sys = genSystemPrompt(engine === 'hyperframes' ? 'hyperframes' : 'remotion', w, h, durSec, outFile);
+    const sys = genSystemPrompt(engine === 'hyperframes' ? 'hyperframes' : 'remotion', w, h, durSec, outFile, mode);
     const args = ['-p', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'bypassPermissions', '--append-system-prompt', sys,
       '--no-session-persistence', prompt];
