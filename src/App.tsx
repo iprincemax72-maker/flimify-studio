@@ -24,6 +24,16 @@ import './App.css';
 
 const FPS = 30;
 
+// ── resizable panel layout (drag the dividers; persisted) ──
+type Layout = { leftW: number; rightW: number; timelineH: number };
+const LAYOUT_KEY = 'flimifyStudio.layout';
+const DEFAULT_LAYOUT: Layout = { leftW: 380, rightW: 560, timelineH: 340 };
+const loadLayout = (): Layout => {
+  try { return { ...DEFAULT_LAYOUT, ...(JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') as Partial<Layout>) }; }
+  catch { return { ...DEFAULT_LAYOUT }; }
+};
+const clampN = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+
 const emptyState = (): EditorState => ({
   fps: FPS,
   width: 1920,
@@ -61,7 +71,31 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inject, setInject] = useState<{ text: string; id: number } | null>(null);
+  const [layout, setLayout] = useState<Layout>(loadLayout);
   const playerRef = useRef<PlayerRef>(null);
+
+  // persist panel sizes
+  useEffect(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* ignore */ } }, [layout]);
+
+  // drag a panel divider. kind: 'left' (Media↔Preview), 'right' (Preview↔Flimify), 'timeline' (Work↔Timeline)
+  const onSplitterDown = (e: React.MouseEvent, kind: 'left' | 'right' | 'timeline') => {
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY, start = layout;
+    const move = (ev: MouseEvent) => setLayout((l) => {
+      if (kind === 'left') return { ...l, leftW: clampN(start.leftW + (ev.clientX - sx), 240, 720) };
+      if (kind === 'right') return { ...l, rightW: clampN(start.rightW - (ev.clientX - sx), 360, 880) };
+      return { ...l, timelineH: clampN(start.timelineH - (ev.clientY - sy), 150, 680) };
+    });
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.classList.remove('resizing-col', 'resizing-row');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    document.body.classList.add(kind === 'timeline' ? 'resizing-row' : 'resizing-col');
+  };
+  const resetLayout = () => setLayout({ ...DEFAULT_LAYOUT });
 
   const addHistory = (clip: BridgeClip, kind: HistoryKind, prompt?: string) => {
     setHistory((h) => {
@@ -382,6 +416,7 @@ export default function App() {
   return (
     <div
       className="studio"
+      style={{ gridTemplateRows: `44px minmax(0,1fr) 6px ${layout.timelineH}px` }}
       onDragOver={onDragOver}
       onDragLeave={(e) => { if (e.clientX === 0 && e.clientY === 0) setDragging(false); }}
       onDrop={onDrop}
@@ -429,7 +464,7 @@ export default function App() {
         </div>
       </header>
 
-      <div className="work">
+      <div className="work" style={{ gridTemplateColumns: `${layout.leftW}px 6px minmax(0,1fr) 6px ${layout.rightW}px` }}>
         <aside className="panel bin">
           <div className="panel-h">Media</div>
           <div className="bin-list">
@@ -443,6 +478,8 @@ export default function App() {
           </div>
           <button className="bin-import" onClick={onImport}>+ Import video</button>
         </aside>
+
+        <div className="splitter-v" onMouseDown={(e) => onSplitterDown(e, 'left')} onDoubleClick={resetLayout} title="Drag to resize · double-click to reset" />
 
         <main className="stage">
           <div className="player-wrap">
@@ -471,6 +508,8 @@ export default function App() {
           </div>
         </main>
 
+        <div className="splitter-v" onMouseDown={(e) => onSplitterDown(e, 'right')} onDoubleClick={resetLayout} title="Drag to resize · double-click to reset" />
+
         <aside className="panel flimify">
           <div className="panel-h">Flimify</div>
           <FlimifyPanel
@@ -486,6 +525,8 @@ export default function App() {
           />
         </aside>
       </div>
+
+      <div className="splitter-h" onMouseDown={(e) => onSplitterDown(e, 'timeline')} onDoubleClick={resetLayout} title="Drag to resize the timeline · double-click to reset" />
 
       <TimelineStrip
         state={state}
