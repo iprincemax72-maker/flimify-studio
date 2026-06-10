@@ -28,6 +28,8 @@ declare global {
       revealFile?: (p: string) => void;
       onMenu?: (cb: (action: string) => void) => void;
       getPathForFile?: (file: File) => string | null;
+      restartEngine?: () => Promise<boolean>;
+      onEngineRestarted?: (cb: () => void) => void;
     };
   }
 }
@@ -64,12 +66,28 @@ export async function generate(
   height: number,
   durationSec: number,
   mode: 'fast' | 'default' | 'slow' = 'default',
+  reqId?: string,
 ): Promise<BridgeClip> {
   const { clip } = await post<{ clip: BridgeClip }>('/generate', {
-    prompt, engine, width, height, durationSec, mode,
+    prompt, engine, width, height, durationSec, mode, reqId,
   });
   return clip;
 }
+
+/** Subscribe to live generation progress for a reqId. Returns an unsubscribe fn. */
+export function onProgress(reqId: string, cb: (text: string) => void): () => void {
+  let es: EventSource | null = null;
+  try {
+    es = new EventSource(`${BRIDGE}/progress-stream?reqId=${encodeURIComponent(reqId)}`);
+    es.addEventListener('progress', (e) => {
+      try { const d = JSON.parse((e as MessageEvent).data); if (d.text) cb(d.text); } catch { /* ignore */ }
+    });
+    es.addEventListener('done', () => { es?.close(); });
+  } catch { /* SSE unavailable — estimate bar still works */ }
+  return () => { try { es?.close(); } catch { /* ignore */ } };
+}
+
+export const newReqId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 export async function exportTimeline(state: EditorState, name: string): Promise<string> {
   const { path } = await post<{ path: string }>('/export', { state, name });

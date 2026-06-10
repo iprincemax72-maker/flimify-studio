@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld('flimify', {
   onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action)),
   // real filesystem path for a drag-dropped File (Electron 32+ removed File.path)
   getPathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } },
+  // restart the local engine (bridge) — exposed for the offline status pill
+  restartEngine: () => ipcRenderer.invoke('restart-engine'),
+  onEngineRestarted: (cb) => ipcRenderer.on('engine-restarted', () => cb()),
 });

@@ -388,9 +388,13 @@ export default function App() {
       )}
       <header className="topbar">
         <div className="brand"><span className="logo">F</span> Flimify <small>Studio</small></div>
-        <div className="topbar-mid">
+        <div
+          className={'topbar-mid' + (online === false ? ' clickable' : '')}
+          onClick={() => { if (online === false) { window.flimify?.restartEngine?.(); setStatus('Restarting engine…'); setTimeout(() => setStatus(''), 3000); } }}
+          title={online === false ? 'Click to restart the engine' : undefined}
+        >
           <span className={'dot ' + (online ? 'on' : online === false ? 'off' : '')} />
-          {online ? 'engine ready' : online === false ? 'engine offline' : 'connecting…'}
+          {online ? 'engine ready' : online === false ? 'engine offline · restart' : 'connecting…'}
           {status && <span className="status"> · {status}</span>}
         </div>
         <div className="topbar-right">

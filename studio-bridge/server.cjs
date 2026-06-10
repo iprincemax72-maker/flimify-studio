@@ -100,6 +100,44 @@ function sendJson(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ── live progress (SSE) ──────────────────────────────────────────────────────
+// generate() emits stage labels (parsed from Claude's tool calls) to whoever is
+// subscribed on a reqId, so the panel shows "Writing Logo.tsx" / "Rendering
+// video" instead of a blind estimate.
+const progressSubs = {}; // reqId → Set<res>
+function pushProgress(reqId, text, pct) {
+  if (!reqId) return;
+  const subs = progressSubs[reqId];
+  if (!subs || !subs.size) return;
+  const data = JSON.stringify({ reqId, text, pct });
+  for (const r of subs) { try { r.write(`event: progress\ndata: ${data}\n\n`); } catch {} }
+}
+function closeProgress(reqId) {
+  const subs = progressSubs[reqId];
+  if (!subs) return;
+  for (const r of subs) { try { r.write('event: done\ndata: {}\n\n'); r.end(); } catch {} }
+  delete progressSubs[reqId];
+}
+// Map a Claude tool call → a human stage label (or null to ignore).
+function toolLabel(name, input) {
+  input = input || {};
+  if (name === 'Write' || name === 'Edit' || name === 'MultiEdit') {
+    const f = input.file_path || input.path || '';
+    if (/\.tsx?$/.test(f)) return 'Writing ' + path.basename(f);
+    if (/\.html?$/.test(f)) return 'Writing the block';
+    return null;
+  }
+  if (name === 'Bash') {
+    const c = String(input.command || '');
+    if (/remotion\s+render|hyperframes\s+render/.test(c)) return 'Rendering video';
+    if (/npm\s+(i|install|ci)|pnpm\s+i|yarn/.test(c)) return 'Installing dependencies';
+    if (/npx\s+remotion\s+(studio|preview)/.test(c)) return 'Setting up';
+    return null;
+  }
+  if (name === 'Read' && /\.tsx?$|skills/.test(input.file_path || '')) return 'Reading the toolkit';
+  return null;
+}
+
 function serveMedia(req, res, id) {
   const entry = registry[id];
   if (!entry || !fs.existsSync(entry.path)) { res.writeHead(404); res.end(); return; }
@@ -191,10 +229,12 @@ Build a FRESH Remotion composition (transparent — no opaque background Absolut
 ProRes 4444 + yuva444p10le is required so the alpha survives. When done, emit: [[IMPORT:${outFile}]]`;
 }
 
-function generate({ prompt, engine, width, height, durationSec, mode }, onStatus) {
+function generate({ prompt, engine, width, height, durationSec, mode, reqId }, onStatus) {
   return new Promise((resolve) => {
     const w = width || 1920, h = height || 1080, durSec = durationSec || 4;
     const outFile = path.join(RENDER_DIR, 'gen_' + Date.now().toString(36) + '.mov');
+    const emit = (text) => { if (reqId) pushProgress(reqId, text); if (onStatus) onStatus(text); };
+    emit('Thinking…');
     const sys = genSystemPrompt(engine === 'hyperframes' ? 'hyperframes' : 'remotion', w, h, durSec, outFile, mode);
     const args = ['-p', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'bypassPermissions', '--append-system-prompt', sys,
@@ -214,7 +254,11 @@ function generate({ prompt, engine, width, height, durationSec, mode }, onStatus
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          if (ev.type === 'assistant' && onStatus) onStatus('working');
+          if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
+            for (const blk of ev.message.content) {
+              if (blk && blk.type === 'tool_use') { const lab = toolLabel(blk.name, blk.input); if (lab) emit(lab); }
+            }
+          }
           if (ev.type === 'result' && ev.result) dbg = (dbg + '\nRESULT: ' + ev.result).slice(-6000);
         } catch {}
       }
@@ -231,16 +275,18 @@ function generate({ prompt, engine, width, height, durationSec, mode }, onStatus
       if (!ok) {
         try { fs.writeFileSync(path.join(WORK_DIR, '_gen_debug.log'), dbg); } catch {}
         log('generate produced no output. tail:', dbg.slice(-700));
+        closeProgress(reqId);
         return resolve({ ok: false, error: 'no output rendered' });
       }
       probe(outFile).then((meta) => {
+        closeProgress(reqId);
         if (!meta) return resolve({ ok: false, error: 'render unreadable' });
         const id = register(outFile, 'AI · ' + String(prompt).slice(0, 40));
         log('generated', path.basename(outFile), `${meta.width}x${meta.height}`);
         resolve({ ok: true, clip: clipFromProbe(id, 'AI · ' + String(prompt).slice(0, 28), meta) });
       });
     });
-    proc.on('error', (e) => { clearInterval(wd); resolve({ ok: false, error: e.message }); });
+    proc.on('error', (e) => { clearInterval(wd); closeProgress(reqId); resolve({ ok: false, error: e.message }); });
   });
 }
 
@@ -505,6 +551,16 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
   if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT });
+  if (req.method === 'GET' && u.startsWith('/progress-stream')) {
+    const reqId = new URL(u, 'http://x').searchParams.get('reqId');
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
+    res.write(':ok\n\n');
+    if (reqId) {
+      (progressSubs[reqId] = progressSubs[reqId] || new Set()).add(res);
+      req.on('close', () => { const s = progressSubs[reqId]; if (s) { s.delete(res); if (!s.size) delete progressSubs[reqId]; } });
+    }
+    return;
+  }
   if (req.method === 'GET' && u.startsWith('/media/')) return serveMedia(req, res, u.slice('/media/'.length));
   if (req.method === 'GET' && u.startsWith('/thumb/')) {
     const t = await makeThumb(u.slice('/thumb/'.length));

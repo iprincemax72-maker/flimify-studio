@@ -32,6 +32,15 @@ function startBridge() {
   bridgeProc.on('exit', (code) => console.log('[main] bridge exited', code));
 }
 function stopBridge() { if (bridgeProc) { try { bridgeProc.kill(); } catch {} bridgeProc = null; } }
+// Manual engine restart (Help → Restart Engine) — useful if the bridge wedges.
+function restartBridge() {
+  console.log('[main] restarting bridge…');
+  stopBridge();
+  setTimeout(() => {
+    startBridge();
+    try { mainWin && mainWin.webContents.send('engine-restarted'); } catch {}
+  }, 400);
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -116,6 +125,9 @@ function buildMenu() {
       role: 'help',
       submenu: [
         { label: 'Flimify Website', click: () => shell.openExternal('https://www.flimify.com') },
+        { type: 'separator' },
+        { label: 'Restart Engine', click: () => restartBridge() },
+        { label: 'Check for Updates…', click: () => shell.openExternal('https://github.com/iprincemax72-maker/claude-extension-premiere-pro-2026/releases') },
         ...(isMac ? [] : [{ type: 'separator' }, { label: 'About', click: aboutBox }]),
       ],
     },
@@ -133,6 +145,7 @@ ipcMain.handle('open-video', async () => {
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
 });
 ipcMain.on('reveal-file', (_e, p) => { try { shell.showItemInFolder(p); } catch {} });
+ipcMain.handle('restart-engine', () => { restartBridge(); return true; });
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) {

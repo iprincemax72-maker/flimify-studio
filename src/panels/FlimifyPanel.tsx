@@ -4,7 +4,7 @@
 // Changes / Delete — a 1:1 port of the Premiere extension, on the no-API-key
 // local-Claude model.
 import { useEffect, useRef, useState } from 'react';
-import { generate, expandPrompt, planQuestions, type BridgeClip } from '../api';
+import { generate, expandPrompt, planQuestions, onProgress, newReqId, type BridgeClip } from '../api';
 import { CATEGORIES, chipsFor, ghostFor } from '../suggestions';
 import { toast } from '../ui/feedback';
 import {
@@ -210,6 +210,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       ...t,
       busy: true,
       startedAt: Date.now(),
+      genStatus: '',
       label: t.messages.length === 0 && t.type === 'animation' ? labelFromPrompt(shown) : t.label,
       messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + shown + (n > 1 ? ` · ${n} versions` : '') }],
     }));
@@ -221,12 +222,16 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       const outbound = n > 1
         ? `${baseOutbound}\n\n[VERSION ${i + 1} OF ${n} — make THIS take distinct: different composition, layout and motion from the others, while still satisfying the prompt. Variation seed ${i + 1}/${n}.]`
         : baseOutbound;
+      const reqId = newReqId();
+      const unsub = onProgress(reqId, (text) => patch(tabId, (t) => (t.busy ? { ...t, genStatus: n > 1 ? `v${i + 1}/${n} · ${text}` : text } : t)));
       try {
-        const clip = await generate(outbound, engine, width, height, durationSec, mode);
+        const clip = await generate(outbound, engine, width, height, durationSec, mode, reqId);
         onRender(clip, iter ? iter.prompt + ' · ' + p : shown);
         patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: shown, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }] }));
       } catch (e) {
         patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }] }));
+      } finally {
+        unsub();
       }
     }
     // finished → atomically pull the next queued prompt (unless paused)
@@ -382,7 +387,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       {active.busy && (
         <div className="fp-gen">
           <div className="fp-gen-top">
-            <span className="fp-gen-label"><span className="fp-spin" /> Generating…</span>
+            <span className="fp-gen-label"><span className="fp-spin" /> {active.genStatus || 'Generating…'}</span>
             <span className="fp-gen-elapsed">{elapsed}s</span>
           </div>
           <div className="fp-gen-bar"><i style={{ width: (progress * 100).toFixed(1) + '%' }} /></div>

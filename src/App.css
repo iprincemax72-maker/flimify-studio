@@ -158,6 +158,8 @@ body { background: transparent; color: var(--text); overflow: hidden; }
 
 /* engine status dot + status text */
 .topbar-mid { display: flex; align-items: center; gap: 7px; }
+.topbar-mid.clickable { cursor: pointer; }
+.topbar-mid.clickable:hover { color: var(--text); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
 .dot.on { background: #2f9e6b; box-shadow: 0 0 8px #2f9e6b88; }
 .dot.off { background: #d7462e; }
