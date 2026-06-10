@@ -16,7 +16,7 @@ export type PlanCard = {
 
 export type Msg =
   | { id: string; role: 'you'; text: string }
-  | { id: string; role: 'flimify'; text: string }
+  | { id: string; role: 'flimify'; text: string; continuePrompt?: string }
   | { id: string; role: 'render'; clip: BridgeClip; prompt: string; status: string; imported: boolean };
 
 export type IterCtx = { prompt: string; src: string; name: string } | null;
@@ -32,6 +32,9 @@ export type FlimifyTab = {
   busy: boolean;
   startedAt: number;     // ms, for the progress estimate
   genStatus: string;     // live stage label from the bridge SSE
+  abort: AbortController | null; // interrupt the in-flight generation
+  curReqId: string;      // reqId of the in-flight generation (for /cancel)
+  cancelled: boolean;    // user interrupted the last run
   iterate: IterCtx;      // "Changes" context for the next send
   outputs: number;       // ×N versions per prompt (1–10)
   queue: { id: string; text: string }[]; // prompts stacked while busy
@@ -59,6 +62,9 @@ export function newTab(type: 'animation' | 'chat', engine: Engine, renderMode: R
     busy: false,
     startedAt: 0,
     genStatus: '',
+    abort: null,
+    curReqId: '',
+    cancelled: false,
     iterate: null,
     outputs: 1,
     queue: [],

@@ -254,6 +254,34 @@ body { background: transparent; color: var(--text); overflow: hidden; }
 .fp-msg.you { align-self: flex-end; background: var(--accent); color: #1a1205; }
 .fp-msg.flimify { align-self: flex-start; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 
+/* ── chat messages with avatars + author (1:1 with the extension) ── */
+.msg { display: flex; gap: 9px; align-items: flex-start; }
+.avatar { width: 24px; height: 24px; border-radius: 7px; flex: 0 0 auto; display: grid; place-items: center; font-size: 11px; font-weight: 800; }
+.msg.you .avatar { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); }
+.msg.flimify .avatar { background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: #1a1205; box-shadow: 0 2px 10px -3px var(--accent-glow); }
+.msg-content { flex: 1; min-width: 0; }
+.msg-author { font-size: 11px; font-weight: 700; color: var(--text); margin-bottom: 3px; }
+.msg.you .msg-author { color: var(--dim); }
+.msg-body { font-size: 12.5px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+.fp-continue { margin-top: 8px; border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 11.5px; font-weight: 600; padding: 5px 11px; border-radius: 7px; cursor: pointer; }
+.fp-continue:hover { background: var(--accent); color: #1a1205; }
+
+/* ── inline "Working" thinking row ── */
+.thinking-stack { display: flex; flex-direction: column; gap: 8px; }
+.thinking-row { display: flex; align-items: center; gap: 8px; }
+.orbit { display: inline-flex; gap: 3px; }
+.orbit span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: orbit 1s ease-in-out infinite; }
+.orbit span:nth-child(2) { animation-delay: .15s; }
+.orbit span:nth-child(3) { animation-delay: .3s; }
+@keyframes orbit { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+.orbit-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.thinking-elapsed { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.interrupt-hint { margin-left: auto; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+.interrupt-hint::before { content: '⎋ '; }
+.progress-bar { height: 5px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+.progress-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 8px var(--accent-glow); transition: width .22s ease-out; }
+.thinking-sub { font-size: 10.5px; color: var(--dim); }
+
 /* ── in-chat render card ── */
 .fp-card { align-self: stretch; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); overflow: hidden; }
 .fp-card-prev { position: relative; height: 150px; background: #050506 repeating-linear-gradient(45deg,#15161a,#15161a 8px,#101116 8px,#101116 16px); cursor: pointer; }
@@ -326,9 +354,13 @@ body { background: transparent; color: var(--text); overflow: hidden; }
 .fp-ghost { position: absolute; inset: 0; padding: 9px 11px; font: inherit; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; pointer-events: none; overflow: hidden; }
 .fp-ghost-typed { color: transparent; }
 .fp-ghost-tail { color: var(--text-faint); }
-.fp-input-foot { display: flex; align-items: center; gap: 10px; }
-.fp-input-foot .fp-send { flex: 1; }
-.fp-hint { font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+.fp-input-foot { display: flex; align-items: center; gap: 8px; }
+.fp-hint { flex: 1; min-width: 0; font-size: 10.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-hint b { color: var(--text); font-weight: 600; }
+.fp-input-foot .fp-send { flex: 0 0 auto; padding: 8px 18px; }
+.fp-queue-btn { background: var(--panel-2) !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
+.fp-stop { flex: 0 0 auto; width: 34px; height: 32px; border: none; border-radius: 9px; background: var(--err); color: #fff; cursor: pointer; display: grid; place-items: center; box-shadow: 0 2px 12px -4px var(--err); }
+.fp-stop:hover { filter: brightness(1.12); }
 
 /* ── "Changes" iteration chip ── */
 .fp-iterbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 12px; padding: 7px 11px; border-radius: 9px; background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent); font-size: 11.5px; }

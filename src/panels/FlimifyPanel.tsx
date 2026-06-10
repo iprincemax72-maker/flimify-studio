@@ -4,7 +4,7 @@
 // Changes / Delete — a 1:1 port of the Premiere extension, on the no-API-key
 // local-Claude model.
 import { useEffect, useRef, useState } from 'react';
-import { generate, expandPrompt, planQuestions, onProgress, newReqId, type BridgeClip } from '../api';
+import { generate, cancelGeneration, expandPrompt, planQuestions, onProgress, newReqId, type BridgeClip } from '../api';
 import { CATEGORIES, chipsFor, ghostFor } from '../suggestions';
 import { toast } from '../ui/feedback';
 import {
@@ -30,8 +30,15 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const [, force] = useState(0); // re-render tick for the progress estimate
   const [outOpen, setOutOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
 
   const active = tabs.find((t) => t.id === activeId) || tabs[0];
+
+  // keep the conversation scrolled to the latest message
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [active.messages.length, active.busy, active.genStatus, activeId]);
 
   // patch one tab immutably
   const patch = (id: string, fn: (t: FlimifyTab) => FlimifyTab) =>
@@ -63,6 +70,11 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       const { tabs: ts, activeId: aid } = liveRef.current;
       const idx = ts.findIndex((t) => t.id === aid);
       const meta = e.metaKey || e.ctrlKey;
+      // ESC — interrupt the active tab's running generation
+      if (e.key === 'Escape') {
+        const cur = ts[idx];
+        if (cur && cur.busy) { e.preventDefault(); cancelActive(cur.id); return; }
+      }
       // Ctrl+Tab / Ctrl+Shift+Tab — cycle tabs
       if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault();
@@ -211,6 +223,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       busy: true,
       startedAt: Date.now(),
       genStatus: '',
+      cancelled: false,
       label: t.messages.length === 0 && t.type === 'animation' ? labelFromPrompt(shown) : t.label,
       messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + shown + (n > 1 ? ` · ${n} versions` : '') }],
     }));
@@ -218,31 +231,47 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
     const baseOutbound = refLines + (iter
       ? `Make a new version of a previous motion graphic.\nOriginal prompt: "${iter.prompt}"\nChange to make: ${p}\nKeep everything else the same unless the change implies otherwise.`
       : p);
+    let cancelled = false;
     for (let i = 0; i < n; i++) {
+      if (cancelled) break;
       const outbound = n > 1
         ? `${baseOutbound}\n\n[VERSION ${i + 1} OF ${n} — make THIS take distinct: different composition, layout and motion from the others, while still satisfying the prompt. Variation seed ${i + 1}/${n}.]`
         : baseOutbound;
       const reqId = newReqId();
+      const ctrl = new AbortController();
+      patch(tabId, (t) => ({ ...t, abort: ctrl, curReqId: reqId }));
       const unsub = onProgress(reqId, (text) => patch(tabId, (t) => (t.busy ? { ...t, genStatus: n > 1 ? `v${i + 1}/${n} · ${text}` : text } : t)));
       try {
-        const clip = await generate(outbound, engine, width, height, durationSec, mode, reqId);
+        const clip = await generate(outbound, engine, width, height, durationSec, mode, reqId, ctrl.signal);
         onRender(clip, iter ? iter.prompt + ' · ' + p : shown);
         patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: shown, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }] }));
       } catch (e) {
-        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }] }));
+        const aborted = ctrl.signal.aborted || (e as Error).name === 'AbortError';
+        cancelled = aborted;
+        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: aborted ? '⏹ Stopped.' : '✗ ' + (e as Error).message, continuePrompt: shown }] }));
       } finally {
         unsub();
       }
     }
-    // finished → atomically pull the next queued prompt (unless paused)
+    // finished/cancelled → clear the abort handle, drain the queue (unless cancelled)
     let next: { id: string; text: string } | null = null;
     setTabs((arr) => arr.map((t) => {
       if (t.id !== tabId) return t;
-      if (!t.paused && t.queue.length) { next = t.queue[0]; return { ...t, busy: false, queue: t.queue.slice(1) }; }
-      return { ...t, busy: false };
+      const base = { ...t, busy: false, abort: null, curReqId: '', genStatus: '' };
+      if (!cancelled && !t.paused && t.queue.length) { next = t.queue[0]; return { ...base, queue: t.queue.slice(1) }; }
+      return { ...base, paused: cancelled ? true : t.paused };
     }));
     if (next) runGen(tabId, (next as { id: string; text: string }).text, null);
   };
+
+  // ── interrupt the in-flight generation (ESC / Stop button) ──
+  const cancelActive = (tabId: string) => {
+    const cur = liveRef.current.tabs.find((t) => t.id === tabId);
+    if (!cur || !cur.busy) return;
+    try { cur.abort?.abort(); } catch { /* ignore */ }
+    if (cur.curReqId) cancelGeneration(cur.curReqId);
+  };
+  const continueFrom = (prompt: string) => { const cur = liveRef.current.tabs.find((t) => t.id === activeId); if (cur && !cur.busy) runGen(cur.id, prompt, null); };
 
   const removeQueued = (qid: string) => patch(active.id, (t) => ({ ...t, queue: t.queue.filter((q) => q.id !== qid) }));
   const runQueueNow = () => {
@@ -357,41 +386,62 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
           </div>
         )
       ) : (
-        <div className="fp-log">
+        <div className="fp-log" ref={logRef}>
           {active.messages.map((m) => {
-            if (m.role === 'render') {
-              return (
-                <div key={m.id} className="fp-card">
-                  <div className="fp-card-prev" onClick={() => onPreview(m.clip)} title="Preview">
-                    <video src={m.clip.src} muted loop playsInline onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})} onMouseLeave={(e) => (e.currentTarget as HTMLVideoElement).pause()} />
-                    <span className="fp-card-play">▶</span>
-                  </div>
-                  <div className="fp-card-meta">
-                    <b>{m.clip.name}</b>
-                    <span>{m.status}</span>
-                  </div>
-                  <div className="fp-card-actions">
-                    <button className="fp-card-btn primary" onClick={() => importCard(m)} disabled={m.imported}>{m.imported ? 'Imported' : 'Import to Timeline'}</button>
-                    <button className="fp-card-btn" onClick={() => onPreview(m.clip)}>Preview</button>
-                    <button className="fp-card-btn" onClick={() => changesCard(m)}>Changes</button>
-                    <button className="fp-card-btn danger" onClick={() => deleteCard(m)}>Delete</button>
+            const who = m.role === 'render' ? 'flimify' : m.role;
+            return (
+              <div key={m.id} className={'msg ' + who}>
+                <div className="avatar">{who === 'you' ? 'Y' : 'F'}</div>
+                <div className="msg-content">
+                  <div className="msg-author">{who === 'you' ? 'You' : 'Flimify'}</div>
+                  <div className="msg-body">
+                    {m.role === 'render' ? (
+                      <div className="fp-card">
+                        <div className="fp-card-prev" onClick={() => onPreview(m.clip)} title="Preview">
+                          <video src={m.clip.src} muted loop playsInline onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})} onMouseLeave={(e) => (e.currentTarget as HTMLVideoElement).pause()} />
+                          <span className="fp-card-play">▶</span>
+                        </div>
+                        <div className="fp-card-meta"><b>{m.clip.name}</b><span>{m.status}</span></div>
+                        <div className="fp-card-actions">
+                          <button className="fp-card-btn primary" onClick={() => importCard(m)} disabled={m.imported}>{m.imported ? 'Imported' : 'Import to Timeline'}</button>
+                          <button className="fp-card-btn" onClick={() => onPreview(m.clip)}>Preview</button>
+                          <button className="fp-card-btn" onClick={() => changesCard(m)}>Changes</button>
+                          <button className="fp-card-btn danger" onClick={() => deleteCard(m)}>Delete</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <span>{m.text}</span>
+                        {m.role === 'flimify' && m.continuePrompt && (
+                          <button className="fp-continue" onClick={() => continueFrom(m.continuePrompt!)}>↻ Continue</button>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
-              );
-            }
-            return <div key={m.id} className={'fp-msg ' + m.role}>{m.text}</div>;
+              </div>
+            );
           })}
-        </div>
-      )}
-
-      {active.busy && (
-        <div className="fp-gen">
-          <div className="fp-gen-top">
-            <span className="fp-gen-label"><span className="fp-spin" /> {active.genStatus || 'Generating…'}</span>
-            <span className="fp-gen-elapsed">{elapsed}s</span>
-          </div>
-          <div className="fp-gen-bar"><i style={{ width: (progress * 100).toFixed(1) + '%' }} /></div>
-          <div className="fp-gen-sub">running on your Claude — no API key</div>
+          {active.busy && (
+            <div className="msg flimify">
+              <div className="avatar">F</div>
+              <div className="msg-content">
+                <div className="msg-author">Flimify</div>
+                <div className="msg-body">
+                  <div className="thinking-stack">
+                    <div className="thinking-row">
+                      <span className="orbit"><span /><span /><span /></span>
+                      <span className="orbit-label">{active.genStatus || 'Working'}</span>
+                      <span className="thinking-elapsed">{elapsed}s</span>
+                      <span className="interrupt-hint">ESC to interrupt</span>
+                    </div>
+                    <div className="progress-bar"><div className="progress-bar-fill" style={{ width: (progress * 100).toFixed(1) + '%' }} /></div>
+                    <div className="thinking-sub">running on your Claude — no API key</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -499,10 +549,22 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
           />
         </div>
         <div className="fp-input-foot">
-          {ghostTail && <span className="fp-hint">↹ Tab to complete</span>}
-          <button className="fp-send" onClick={send} disabled={!active.draft.trim()}>
-            {active.busy ? 'Add to queue' : active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
-          </button>
+          {active.busy ? (
+            <>
+              <span className="fp-hint">Enter to queue · <b>Esc</b> to stop</span>
+              {active.draft.trim() && <button className="fp-send fp-queue-btn" onClick={send}>Add to queue</button>}
+              <button className="fp-stop" onClick={() => cancelActive(active.id)} title="Interrupt (Esc)" aria-label="Stop">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="fp-hint fp-kbd">{ghostTail ? '↹ Tab to complete' : 'Tab accept · Enter send · ⌘V paste · ⌘C copy'}</span>
+              <button className="fp-send" onClick={send} disabled={!active.draft.trim()}>
+                {active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -82,11 +82,22 @@ export async function generate(
   durationSec: number,
   mode: 'fast' | 'default' | 'slow' = 'default',
   reqId?: string,
+  signal?: AbortSignal,
 ): Promise<BridgeClip> {
-  const { clip } = await post<{ clip: BridgeClip }>('/generate', {
-    prompt, engine, width, height, durationSec, mode, reqId,
+  const r = await fetch(BRIDGE + '/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, engine, width, height, durationSec, mode, reqId }),
+    signal,
   });
-  return clip;
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'bridge ' + r.status);
+  return (j as { clip: BridgeClip }).clip;
+}
+
+/** Interrupt a running generation — kills the bridge's claude process. */
+export async function cancelGeneration(reqId: string): Promise<void> {
+  try { await fetch(BRIDGE + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reqId }) }); } catch { /* ignore */ }
 }
 
 /** Subscribe to live generation progress for a reqId. Returns an unsubscribe fn. */

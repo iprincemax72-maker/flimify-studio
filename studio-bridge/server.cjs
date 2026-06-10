@@ -265,6 +265,14 @@ Build a FRESH Remotion composition (transparent — no opaque background Absolut
 ProRes 4444 + yuva444p10le is required so the alpha survives. When done, emit: [[IMPORT:${outFile}]]`;
 }
 
+// Running generation processes, keyed by reqId, so /cancel can interrupt them.
+const genProcs = {};
+function cancelGen(reqId) {
+  const p = reqId && genProcs[reqId];
+  if (p) { try { p.kill('SIGKILL'); } catch {} delete genProcs[reqId]; closeProgress(reqId); return true; }
+  return false;
+}
+
 function generate({ prompt, engine, width, height, durationSec, mode, reqId }, onStatus) {
   return new Promise((resolve) => {
     const w = width || 1920, h = height || 1080, durSec = durationSec || 4;
@@ -276,7 +284,7 @@ function generate({ prompt, engine, width, height, durationSec, mode, reqId }, o
       '--permission-mode', 'bypassPermissions', '--append-system-prompt', sys,
       '--no-session-persistence', prompt];
     let proc;
-    try { proc = spawn(CLAUDE, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawn(CLAUDE, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); if (reqId) genProcs[reqId] = proc; }
     catch (e) { return resolve({ ok: false, error: 'claude not available: ' + e.message }); }
     let buf = '', last = Date.now(), dbg = '';
     proc.stdout.on('data', (c) => {
@@ -307,6 +315,7 @@ function generate({ prompt, engine, width, height, durationSec, mode, reqId }, o
     }, 10000);
     proc.on('close', () => {
       clearInterval(wd);
+      if (reqId) delete genProcs[reqId];
       const ok = fs.existsSync(outFile) && (() => { try { return fs.statSync(outFile).size > 1000; } catch { return false; } })();
       if (!ok) {
         try { fs.writeFileSync(path.join(WORK_DIR, '_gen_debug.log'), dbg); } catch {}
@@ -625,6 +634,12 @@ const server = http.createServer(async (req, res) => {
     const id = register(src, path.basename(src));
     log('import', path.basename(src), `${meta.width}x${meta.height} ${meta.durationSec.toFixed(1)}s`);
     return sendJson(res, 200, { ok: true, clip: clipFromProbe(id, path.basename(src), meta) });
+  }
+  if (req.method === 'POST' && u === '/cancel') {
+    const { reqId } = await readBody(req);
+    const killed = cancelGen(reqId);
+    log('cancel', reqId, killed ? '(killed)' : '(nothing running)');
+    return sendJson(res, 200, { ok: true, killed });
   }
   if (req.method === 'POST' && u === '/generate') {
     const body = await readBody(req);
