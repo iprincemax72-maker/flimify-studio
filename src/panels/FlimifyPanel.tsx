@@ -118,51 +118,66 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const useChip = (p: string) => { patch(active.id, (t) => ({ ...t, draft: p })); requestAnimationFrame(() => inputRef.current?.focus()); };
 
   // ── generate ──
-  const send = async () => {
-    const p = active.draft.trim();
-    if (!p || active.busy) return;
-    const tabId = active.id;
-    const iter = active.iterate;
-    const n = iter ? 1 : Math.max(1, Math.min(10, active.outputs));
-    const firstPrompt = active.messages.length === 0;
+  // Hitting send while a tab is already rendering queues the prompt instead of
+  // dropping it; the queue auto-drains FIFO when the in-flight render finishes.
+  const send = () => {
+    const cur = liveRef.current.tabs.find((t) => t.id === liveRef.current.activeId);
+    if (!cur) return;
+    const p = cur.draft.trim();
+    if (!p) return;
+    const iter = cur.iterate;
+    patch(cur.id, (t) => ({ ...t, draft: '', iterate: null }));
+    if (cur.busy) {
+      patch(cur.id, (t) => ({ ...t, paused: false, queue: [...t.queue, { id: mkId('q'), text: p }] }));
+      return;
+    }
+    runGen(cur.id, p, iter);
+  };
+
+  const runGen = async (tabId: string, p: string, iter: typeof active.iterate) => {
+    const cur = liveRef.current.tabs.find((t) => t.id === tabId);
+    if (!cur) return;
+    const engine = cur.engine, mode = cur.renderMode;
+    const n = iter ? 1 : Math.max(1, Math.min(10, cur.outputs));
     patch(tabId, (t) => ({
       ...t,
-      draft: '',
-      iterate: null,
       busy: true,
       startedAt: Date.now(),
-      label: firstPrompt && t.type === 'animation' ? labelFromPrompt(p) : t.label,
-      messages: [
-        ...t.messages,
-        { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + p + (n > 1 ? ` · ${n} versions` : '') },
-      ],
+      label: t.messages.length === 0 && t.type === 'animation' ? labelFromPrompt(p) : t.label,
+      messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + p + (n > 1 ? ` · ${n} versions` : '') }],
     }));
-    // When iterating ("Changes"), send a fuller brief so the new render is a
-    // tweak of the previous one rather than a from-scratch reinterpretation.
     const baseOutbound = iter
       ? `Make a new version of a previous motion graphic.\nOriginal prompt: "${iter.prompt}"\nChange to make: ${p}\nKeep everything else the same unless the change implies otherwise.`
       : p;
-    // N distinct takes. The studio-bridge renders one at a time today, so we
-    // loop here; each take gets a variation nudge so they differ.
     for (let i = 0; i < n; i++) {
       const outbound = n > 1
         ? `${baseOutbound}\n\n[VERSION ${i + 1} OF ${n} — make THIS take distinct: different composition, layout and motion from the others, while still satisfying the prompt. Variation seed ${i + 1}/${n}.]`
         : baseOutbound;
       try {
-        const clip = await generate(outbound, active.engine, width, height, durationSec, active.renderMode);
+        const clip = await generate(outbound, engine, width, height, durationSec, mode);
         onRender(clip, iter ? iter.prompt + ' · ' + p : p);
-        patch(tabId, (t) => ({
-          ...t,
-          messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: p, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }],
-        }));
+        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: p, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }] }));
       } catch (e) {
-        patch(tabId, (t) => ({
-          ...t,
-          messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }],
-        }));
+        patch(tabId, (t) => ({ ...t, messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }] }));
       }
     }
-    patch(tabId, (t) => ({ ...t, busy: false }));
+    // finished → atomically pull the next queued prompt (unless paused)
+    let next: { id: string; text: string } | null = null;
+    setTabs((arr) => arr.map((t) => {
+      if (t.id !== tabId) return t;
+      if (!t.paused && t.queue.length) { next = t.queue[0]; return { ...t, busy: false, queue: t.queue.slice(1) }; }
+      return { ...t, busy: false };
+    }));
+    if (next) runGen(tabId, (next as { id: string; text: string }).text, null);
+  };
+
+  const removeQueued = (qid: string) => patch(active.id, (t) => ({ ...t, queue: t.queue.filter((q) => q.id !== qid) }));
+  const runQueueNow = () => {
+    const cur = liveRef.current.tabs.find((t) => t.id === activeId);
+    if (!cur || cur.busy || !cur.queue.length) return;
+    const head = cur.queue[0];
+    patch(cur.id, (t) => ({ ...t, paused: false, queue: t.queue.slice(1) }));
+    runGen(cur.id, head.text, null);
   };
 
   // render-card actions
@@ -333,18 +348,32 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
         </div>
       )}
 
+      {active.queue.length > 0 && (
+        <div className="fp-queue">
+          <div className="fp-queue-head">
+            <span>Queue · {active.queue.length}</span>
+            {!active.busy && <button className="fp-queue-run" onClick={runQueueNow}>▶ Run</button>}
+          </div>
+          {active.queue.map((q, i) => (
+            <div key={q.id} className={'fp-queue-item' + (i === 0 && active.busy ? ' running' : '')}>
+              <span>{q.text.length > 56 ? q.text.slice(0, 56) + '…' : q.text}</span>
+              <button onClick={() => removeQueued(q.id)} title="Remove">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="fp-input">
         <textarea
           ref={inputRef}
           value={active.draft}
           onChange={(e) => patch(active.id, (t) => ({ ...t, draft: e.target.value }))}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={active.type === 'chat' ? 'Message Flimify…' : active.iterate ? 'What to change?' : 'Ask Flimify…'}
-          disabled={active.busy}
+          placeholder={active.type === 'chat' ? 'Message Flimify…' : active.busy ? 'Queue another prompt…' : active.iterate ? 'What to change?' : 'Ask Flimify…'}
           rows={2}
         />
-        <button className="fp-send" onClick={send} disabled={active.busy || !active.draft.trim()}>
-          {active.busy ? 'Generating…' : active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
+        <button className="fp-send" onClick={send} disabled={!active.draft.trim()}>
+          {active.busy ? 'Add to queue' : active.iterate ? 'Apply changes' : active.type === 'chat' ? 'Send' : 'Generate'}
         </button>
       </div>
     </div>

@@ -25,6 +25,8 @@ export type FlimifyTab = {
   startedAt: number;     // ms, for the progress estimate
   iterate: IterCtx;      // "Changes" context for the next send
   outputs: number;       // ×N versions per prompt (1–10)
+  queue: { id: string; text: string }[]; // prompts stacked while busy
+  paused: boolean;       // queue paused (after a cancel) — ▶ Run resumes
   chipCat: string;
   chipQuery: string;
 };
@@ -45,6 +47,8 @@ export function newTab(type: 'animation' | 'chat', engine: Engine, renderMode: R
     startedAt: 0,
     iterate: null,
     outputs: 1,
+    queue: [],
+    paused: false,
     chipCat: 'Popular',
     chipQuery: '',
   };
