@@ -6,7 +6,7 @@ type Cfg = { count: number; rMin: number; rMax: number; speed: number; alpha: nu
 type Part = { x: number; y: number; r: number; vx: number; vy: number; ph: number; tw: number; a: number };
 
 const STYLE_CFG: Record<string, Cfg> = {
-  dust:    { count: 64, rMin: 0.9, rMax: 2.8,  speed: 0.26, alpha: 0.7,  twinkle: 0.15, lines: false, drift: 'up' },
+  dust:    { count: 130, rMin: 1.6, rMax: 4.6,  speed: 0.26, alpha: 1.0,  twinkle: 0.2,  lines: false, drift: 'up' },
   bokeh:   { count: 24, rMin: 7.0, rMax: 20.0, speed: 0.14, alpha: 0.28, twinkle: 0.0,  lines: false, drift: 'free' },
   stars:   { count: 90, rMin: 0.6, rMax: 2.0,  speed: 0.09, alpha: 0.9,  twinkle: 1.0,  lines: false, drift: 'free' },
   network: { count: 50, rMin: 1.4, rMax: 2.8,  speed: 0.34, alpha: 0.8,  twinkle: 0.0,  lines: true,  drift: 'free' },
