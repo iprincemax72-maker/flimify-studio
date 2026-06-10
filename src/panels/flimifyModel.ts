@@ -24,6 +24,7 @@ export type FlimifyTab = {
   busy: boolean;
   startedAt: number;     // ms, for the progress estimate
   iterate: IterCtx;      // "Changes" context for the next send
+  outputs: number;       // ×N versions per prompt (1–10)
   chipCat: string;
   chipQuery: string;
 };
@@ -43,6 +44,7 @@ export function newTab(type: 'animation' | 'chat', engine: Engine, renderMode: R
     busy: false,
     startedAt: 0,
     iterate: null,
+    outputs: 1,
     chipCat: 'Popular',
     chipQuery: '',
   };

@@ -26,6 +26,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const [tabs, setTabs] = useState<FlimifyTab[]>(() => [newTab('animation', defaultEngine, 'default')]);
   const [activeId, setActiveId] = useState<string>(() => tabs[0].id);
   const [, force] = useState(0); // re-render tick for the progress estimate
+  const [outOpen, setOutOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = tabs.find((t) => t.id === activeId) || tabs[0];
@@ -40,6 +41,53 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
     const i = setInterval(() => force((n) => n + 1), 200);
     return () => clearInterval(i);
   }, [active.busy, active.id]);
+
+  // keep latest tabs/active for the global shortcut listener (bind once)
+  const liveRef = useRef({ tabs, activeId });
+  liveRef.current = { tabs, activeId };
+
+  // ── keyboard shortcuts (ported from the extension) ──
+  useEffect(() => {
+    const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
+    const onKey = (e: KeyboardEvent) => {
+      const { tabs: ts, activeId: aid } = liveRef.current;
+      const idx = ts.findIndex((t) => t.id === aid);
+      const meta = e.metaKey || e.ctrlKey;
+      // Ctrl+Tab / Ctrl+Shift+Tab — cycle tabs
+      if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault();
+        const dir = e.shiftKey ? -1 : 1;
+        const next = (idx + dir + ts.length) % ts.length;
+        setActiveId(ts[next].id);
+        return;
+      }
+      // Cmd/Ctrl+Shift+T — new animation tab ; +Shift+W — close active
+      if (meta && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+        e.preventDefault();
+        const cur = ts[idx] || ts[0];
+        const t = newTab('animation', cur.engine, cur.renderMode);
+        setTabs((arr) => [...arr, t]); setActiveId(t.id); return;
+      }
+      if (meta && e.shiftKey && (e.key === 'W' || e.key === 'w')) {
+        e.preventDefault();
+        setTabs((arr) => {
+          const next = arr.filter((t) => t.id !== aid);
+          if (next.length === 0) { const t = newTab('animation', defaultEngine, 'default'); setActiveId(t.id); return [t]; }
+          setActiveId(next[Math.max(0, idx - 1)].id);
+          return next;
+        });
+        return;
+      }
+      // Cmd/Ctrl+1..9 — jump to tab N (only when not typing)
+      if (meta && !e.shiftKey && !typing() && /^[1-9]$/.test(e.key)) {
+        const n = parseInt(e.key, 10) - 1;
+        if (ts[n]) { e.preventDefault(); setActiveId(ts[n].id); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── tabs ──
   const addTab = (type: 'animation' | 'chat') => {
@@ -75,6 +123,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
     if (!p || active.busy) return;
     const tabId = active.id;
     const iter = active.iterate;
+    const n = iter ? 1 : Math.max(1, Math.min(10, active.outputs));
     const firstPrompt = active.messages.length === 0;
     patch(tabId, (t) => ({
       ...t,
@@ -83,28 +132,37 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       busy: true,
       startedAt: Date.now(),
       label: firstPrompt && t.type === 'animation' ? labelFromPrompt(p) : t.label,
-      messages: [...t.messages, { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + p }],
+      messages: [
+        ...t.messages,
+        { id: mkId('m'), role: 'you', text: (iter ? '↳ ' : '') + p + (n > 1 ? ` · ${n} versions` : '') },
+      ],
     }));
     // When iterating ("Changes"), send a fuller brief so the new render is a
     // tweak of the previous one rather than a from-scratch reinterpretation.
-    const outbound = iter
+    const baseOutbound = iter
       ? `Make a new version of a previous motion graphic.\nOriginal prompt: "${iter.prompt}"\nChange to make: ${p}\nKeep everything else the same unless the change implies otherwise.`
       : p;
-    try {
-      const clip = await generate(outbound, active.engine, width, height, durationSec, active.renderMode);
-      onRender(clip, iter ? iter.prompt + ' · ' + p : p);
-      patch(tabId, (t) => ({
-        ...t,
-        busy: false,
-        messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: p, status: 'Ready · not imported', imported: false }],
-      }));
-    } catch (e) {
-      patch(tabId, (t) => ({
-        ...t,
-        busy: false,
-        messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }],
-      }));
+    // N distinct takes. The studio-bridge renders one at a time today, so we
+    // loop here; each take gets a variation nudge so they differ.
+    for (let i = 0; i < n; i++) {
+      const outbound = n > 1
+        ? `${baseOutbound}\n\n[VERSION ${i + 1} OF ${n} — make THIS take distinct: different composition, layout and motion from the others, while still satisfying the prompt. Variation seed ${i + 1}/${n}.]`
+        : baseOutbound;
+      try {
+        const clip = await generate(outbound, active.engine, width, height, durationSec, active.renderMode);
+        onRender(clip, iter ? iter.prompt + ' · ' + p : p);
+        patch(tabId, (t) => ({
+          ...t,
+          messages: [...t.messages, { id: mkId('m'), role: 'render', clip, prompt: p, status: n > 1 ? `Version ${i + 1}/${n} · not imported` : 'Ready · not imported', imported: false }],
+        }));
+      } catch (e) {
+        patch(tabId, (t) => ({
+          ...t,
+          messages: [...t.messages, { id: mkId('m'), role: 'flimify', text: '✗ ' + (e as Error).message }],
+        }));
+      }
     }
+    patch(tabId, (t) => ({ ...t, busy: false }));
   };
 
   // render-card actions
@@ -246,6 +304,25 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
           </div>
           <div className="fp-gen-bar"><i style={{ width: (progress * 100).toFixed(1) + '%' }} /></div>
           <div className="fp-gen-sub">running on your Claude — no API key</div>
+        </div>
+      )}
+
+      {active.type === 'animation' && !active.iterate && (
+        <div className="fp-extras">
+          <div className={'fp-out' + (outOpen ? ' open' : '')}>
+            <button className="fp-out-btn" onClick={() => setOutOpen((o) => !o)} title="How many versions to generate from one prompt">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+              ×{active.outputs}
+            </button>
+            {outOpen && (
+              <div className="fp-out-menu">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <button key={n} className={active.outputs === n ? 'on' : ''} onClick={() => { patch(active.id, (t) => ({ ...t, outputs: n })); setOutOpen(false); }}>{n}</button>
+                ))}
+                <div className="fp-out-hint">versions per prompt</div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
