@@ -15,7 +15,7 @@ import { HistoryPanel } from './panels/HistoryPanel';
 import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, type Settings } from './settings';
 import { configureParticles } from './particles';
 import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
-import { FeedbackHost, toast, confirmDialog } from './ui/feedback';
+import { FeedbackHost, toast, confirmDialog, openLightbox } from './ui/feedback';
 import './App.css';
 
 const FPS = 30;
@@ -203,11 +203,41 @@ export default function App() {
     return (vids[vids.length - 1] || vids[0])?.id || 'v2';
   };
 
-  // ── generated overlay → top video track at the playhead ──
-  const onGenerated = (b: BridgeClip) => {
+  const overlayLabel = () => {
+    const vids = state.tracks.filter((t) => t.type === 'video');
+    return (vids[vids.length - 1] || vids[0])?.label || 'V2';
+  };
+
+  // ── a generation finished → log it (bin + history); does NOT auto-place.
+  // The render card in the Flimify panel offers Import-to-Timeline, like the
+  // extension. ──
+  const onRenderLogged = (b: BridgeClip, prompt?: string) => {
     setBin((x) => [b, ...x]);
-    addHistory(b, 'generate', b.name.replace(/^AI · /, ''));
+    addHistory(b, 'generate', prompt || b.name.replace(/^AI · /, ''));
+  };
+  // ── render card → "Import to Timeline": drop onto the overlay track at the
+  // playhead (confirm first if the setting is on). ──
+  const onImportClip = async (b: BridgeClip) => {
+    if (settings.confirmImport) {
+      const ok = await confirmDialog({ title: 'Import to timeline?', message: 'Place “' + b.name + '” on ' + overlayLabel() + ' at the playhead.', okLabel: 'Import' });
+      if (!ok) return;
+    }
     addClip(overlayTrackId(), toTimelineClip(b, frame));
+    toast('Imported “' + b.name + '” → ' + overlayLabel());
+  };
+  const onPreviewClip = (b: BridgeClip) => openLightbox({ src: b.src, kind: 'video', caption: b.name });
+  const onDeleteClip = async (b: BridgeClip): Promise<boolean> => {
+    const ok = await confirmDialog({ title: 'Delete this render?', message: 'Removes “' + b.name + '” from disk. This can’t be undone.', okLabel: 'Delete', danger: true });
+    if (!ok) return false;
+    try { await deleteMedia(b.id); } catch { /* still drop from UI */ }
+    setBin((x) => x.filter((c) => c.id !== b.id));
+    setHistory((h) => { const n = h.filter((e) => e.id !== b.id); saveHistory(n); return n; });
+    setState((s) => {
+      const tracks = s.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => !('src' in c) || c.src !== b.src) }));
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+    toast('Deleted “' + b.name + '”.');
+    return true;
   };
 
   // ── add / remove timeline tracks (right-click on a track header) ──
@@ -404,7 +434,10 @@ export default function App() {
             height={aspectDims(settings.aspect, state.width, state.height)[1]}
             durationSec={settings.duration === 'auto' ? 4 : Number(settings.duration)}
             defaultEngine={settings.engine}
-            onClip={onGenerated}
+            onRender={onRenderLogged}
+            onImport={onImportClip}
+            onPreview={onPreviewClip}
+            onDelete={onDeleteClip}
           />
         </aside>
       </div>
