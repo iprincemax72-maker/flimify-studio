@@ -27,6 +27,7 @@ declare global {
       saveExport?: (srcPath: string, suggestedName: string) => Promise<string | null>;
       revealFile?: (p: string) => void;
       onMenu?: (cb: (action: string) => void) => void;
+      getPathForFile?: (file: File) => string | null;
     };
   }
 }

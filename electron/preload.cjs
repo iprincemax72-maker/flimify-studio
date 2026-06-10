@@ -1,6 +1,6 @@
 // Preload — the secure bridge between the editor UI (renderer) and Node/main.
 // contextIsolation stays ON; only this explicit API reaches the page.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('flimify', {
   isDesktop: true,
@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld('flimify', {
   revealFile: (p) => ipcRenderer.send('reveal-file', p),
   // native menu → renderer actions (import / export)
   onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action)),
+  // real filesystem path for a drag-dropped File (Electron 32+ removed File.path)
+  getPathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } },
 });

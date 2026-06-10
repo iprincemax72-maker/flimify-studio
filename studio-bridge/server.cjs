@@ -24,9 +24,33 @@ const RENDER_DIR = path.join(STUDIO_DIR, 'renders');
 const WORK_DIR = path.join(STUDIO_DIR, 'work');
 const REGISTRY = path.join(STUDIO_DIR, 'registry.json');
 const RENDER_PROJECT = process.env.FLIMIFY_RENDER_PROJECT || path.join(HOME, 'PremiereClaude', 'remotion-intro');
-const FFMPEG = process.env.FLIMIFY_FFMPEG || 'ffmpeg';
-const FFPROBE = FFMPEG.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
-const CLAUDE = process.env.FLIMIFY_CLAUDE || path.join(HOME, '.local', 'bin', 'claude');
+// ── PATH repair (CRITICAL) ─────────────────────────────────────────────────
+// A GUI-launched macOS app inherits a sparse PATH (/usr/bin:/bin:/usr/sbin:
+// /sbin) — it does NOT include /opt/homebrew/bin or ~/.local/bin. So a bridge
+// spawned by the packaged app can't find ffprobe / npx / node / claude, and
+// import + generate + export silently fail. Prepend the real tool dirs so every
+// child process (ffmpeg, claude, npx) resolves its binaries.
+const _binDirs = [
+  '/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local', 'bin'),
+  '/opt/homebrew/sbin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
+];
+process.env.PATH = [...new Set([..._binDirs, ...((process.env.PATH || '').split(path.delimiter))])]
+  .filter(Boolean).join(path.delimiter);
+
+// Resolve a binary to an absolute path: explicit candidates first, then the
+// repaired PATH, then bare name (let spawn try).
+function resolveBin(name, candidates) {
+  for (const c of candidates || []) { try { if (fs.existsSync(c)) return c; } catch {} }
+  for (const d of process.env.PATH.split(path.delimiter)) {
+    try { const p = path.join(d, name); if (fs.existsSync(p)) return p; } catch {}
+  }
+  return name;
+}
+
+const FFMPEG = process.env.FLIMIFY_FFMPEG || resolveBin('ffmpeg', ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']);
+const FFPROBE = resolveBin('ffprobe', [FFMPEG.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), '/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']);
+const CLAUDE = process.env.FLIMIFY_CLAUDE || resolveBin('claude', [path.join(HOME, '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude']);
+const NPX = resolveBin('npx', [path.join(HOME, '.local', 'bin', 'npx'), '/opt/homebrew/bin/npx', '/usr/local/bin/npx']);
 const FPS = 30;
 
 for (const d of [STUDIO_DIR, MEDIA_DIR, RENDER_DIR, WORK_DIR]) fs.mkdirSync(d, { recursive: true });
@@ -146,10 +170,12 @@ function generate({ prompt, engine, width, height, durationSec }, onStatus) {
     let proc;
     try { proc = spawn(CLAUDE, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ ok: false, error: 'claude not available: ' + e.message }); }
-    let buf = '', last = Date.now();
+    let buf = '', last = Date.now(), dbg = '';
     proc.stdout.on('data', (c) => {
       last = Date.now();
-      buf += c.toString();
+      const s = c.toString();
+      dbg = (dbg + s).slice(-6000);
+      buf += s;
       let nl;
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
@@ -157,10 +183,11 @@ function generate({ prompt, engine, width, height, durationSec }, onStatus) {
         try {
           const ev = JSON.parse(line);
           if (ev.type === 'assistant' && onStatus) onStatus('working');
+          if (ev.type === 'result' && ev.result) dbg = (dbg + '\nRESULT: ' + ev.result).slice(-6000);
         } catch {}
       }
     });
-    proc.stderr.on('data', () => { last = Date.now(); });
+    proc.stderr.on('data', (c) => { last = Date.now(); dbg = (dbg + '\nSTDERR: ' + c.toString()).slice(-6000); });
     const HARD = 12 * 60 * 1000, IDLE = 5 * 60 * 1000;
     const startedAt = Date.now();
     const wd = setInterval(() => {
@@ -169,7 +196,11 @@ function generate({ prompt, engine, width, height, durationSec }, onStatus) {
     proc.on('close', () => {
       clearInterval(wd);
       const ok = fs.existsSync(outFile) && (() => { try { return fs.statSync(outFile).size > 1000; } catch { return false; } })();
-      if (!ok) return resolve({ ok: false, error: 'no output rendered' });
+      if (!ok) {
+        try { fs.writeFileSync(path.join(WORK_DIR, '_gen_debug.log'), dbg); } catch {}
+        log('generate produced no output. tail:', dbg.slice(-700));
+        return resolve({ ok: false, error: 'no output rendered' });
+      }
       probe(outFile).then((meta) => {
         if (!meta) return resolve({ ok: false, error: 'render unreadable' });
         const id = register(outFile, 'AI · ' + String(prompt).slice(0, 40));
@@ -193,7 +224,7 @@ function exportTimeline(state, name) {
     const args = ['remotion', 'render', entry, 'StudioTimeline', out,
       '--props=' + propsFile, '--codec=h264', '--mute', '--hardware-acceleration=if-possible', '--log=error'];
     let proc;
-    try { proc = spawn('npx', args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawn(NPX, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ ok: false, error: e.message }); }
     let err = '';
     proc.stderr.on('data', (c) => { err += c.toString(); });
@@ -280,7 +311,7 @@ registerRoot(Root);`;
     fs.writeFileSync(entryAbs, entry);
     fs.writeFileSync(propsFile, JSON.stringify({ lines, style, options: {}, fps, width: w, height: h }));
     const args = ['remotion', 'render', entryRel, 'Captions', outFile, '--codec=prores', '--prores-profile=4444', '--image-format=png', '--pixel-format=yuva444p10le', '--mute', '--hardware-acceleration=if-possible', '--props=' + propsFile, '--log=error'];
-    const proc = spawn('npx', args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(NPX, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let er = ''; proc.stderr.on('data', (c) => (er += c.toString()));
     const clean = () => { try { fs.unlinkSync(entryAbs); } catch {} try { fs.unlinkSync(propsFile); } catch {} };
     proc.on('close', (code) => { clean(); (code === 0 && fs.existsSync(outFile)) ? resolve({ ok: true, file: outFile }) : resolve({ ok: false, error: 'caption render failed: ' + er.slice(-300) }); });
@@ -350,5 +381,18 @@ const server = http.createServer(async (req, res) => {
   res.end('not found');
 });
 
+// Port-conflict resilience: if a stale (old-version) bridge holds the port,
+// evict it so the newest app's bridge always wins, then retry.
+let _listenTries = 0;
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE' && _listenTries < 8) {
+    _listenTries++;
+    log('port ' + PORT + ' busy — evicting squatter (try ' + _listenTries + ')');
+    try { require('child_process').execSync('lsof -ti tcp:' + PORT + ' | xargs kill -9', { stdio: 'ignore' }); } catch {}
+    setTimeout(() => { try { server.listen(PORT, '127.0.0.1'); } catch {} }, 500);
+  } else {
+    log('listen error', err && err.message);
+  }
+});
 server.listen(PORT, '127.0.0.1', () => log(`listening on http://localhost:${PORT}  (render project: ${RENDER_PROJECT})`));
 process.on('uncaughtException', (e) => log('uncaught', e && e.message));

@@ -17,6 +17,19 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   height: 100vh;
   display: grid;
   grid-template-rows: 44px 1fr 230px;
+  position: relative;
+}
+
+/* drag-and-drop import overlay */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(11,12,14,0.72); backdrop-filter: blur(2px);
+  display: grid; place-items: center; pointer-events: none;
+}
+.drop-card {
+  border: 2px dashed var(--accent); border-radius: 18px;
+  padding: 40px 64px; font-size: 18px; font-weight: 700; color: var(--text);
+  background: rgba(226,136,95,0.08);
 }
 
 /* top bar */

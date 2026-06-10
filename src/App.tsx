@@ -110,17 +110,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
-  // ── import footage ──
-  const onImport = async () => {
+  // ── import footage (shared by the button, menu, and drag-drop) ──
+  const importByPath = async (p: string) => {
+    setStatus('Importing…');
     try {
-      let p: string | null = null;
-      if (window.flimify?.openVideo) p = await window.flimify.openVideo();
-      else p = DEV_SAMPLE; // browser dev fallback
-      if (!p) return;
-      setStatus('Importing…');
       const clip = await importPath(p);
       setBin((b) => [clip, ...b]);
-      // place after the last V1 clip
       setState((s) => {
         const v1 = s.tracks.find((t) => t.id === 'v1')!;
         const at = v1.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
@@ -132,6 +127,33 @@ export default function App() {
       setStatus('');
     } catch (e) {
       setStatus('Import failed: ' + (e as Error).message);
+    }
+  };
+
+  const onImport = async () => {
+    let p: string | null = null;
+    if (window.flimify?.openVideo) p = await window.flimify.openVideo();
+    else p = DEV_SAMPLE; // browser dev fallback
+    if (p) await importByPath(p);
+  };
+
+  // ── drag-and-drop video files anywhere onto the editor ──
+  const [dragging, setDragging] = useState(false);
+  const isVideo = (f: File) => /^video\//.test(f.type) || /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(f.name);
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer?.files || []).filter(isVideo);
+    for (const f of files) {
+      const p = window.flimify?.getPathForFile?.(f) || (f as unknown as { path?: string }).path;
+      if (p) await importByPath(p);
+      else setStatus('Drag-drop import needs the desktop app');
+    }
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (Array.from(e.dataTransfer?.items || []).some((i) => i.kind === 'file')) {
+      e.preventDefault();
+      setDragging(true);
     }
   };
 
@@ -192,7 +214,17 @@ export default function App() {
   }, []);
 
   return (
-    <div className="studio">
+    <div
+      className="studio"
+      onDragOver={onDragOver}
+      onDragLeave={(e) => { if (e.clientX === 0 && e.clientY === 0) setDragging(false); }}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div className="drop-overlay" onDragLeave={() => setDragging(false)}>
+          <div className="drop-card">Drop video to import</div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand"><span className="logo">F</span> Flimify <small>Studio</small></div>
         <div className="topbar-mid">
