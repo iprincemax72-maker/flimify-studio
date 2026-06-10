@@ -10,6 +10,7 @@ const PX_PER_FRAME = 5;
 const TRACK_H = 40;
 const RULER_H = 26;
 const EDGE = 9;
+const LABEL_W = 34; // left gutter for the V1/V2/A1… track headers (matches CSS)
 
 type Patch = Partial<Pick<Clip, 'from' | 'durationInFrames'>> & { trimBefore?: number };
 
@@ -76,7 +77,7 @@ export const TimelineStrip: React.FC<{
     const el = wrapRef.current;
     if (!el) return;
     onSelect(null);
-    const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft;
+    const x = e.clientX - el.getBoundingClientRect().left + el.scrollLeft - LABEL_W;
     onSeek(Math.max(0, Math.min(state.durationInFrames, Math.round(x / PX_PER_FRAME))));
   };
 
@@ -106,10 +107,10 @@ export const TimelineStrip: React.FC<{
 
   return (
     <div className="tl" ref={wrapRef} onMouseDown={seekFromEvent}>
-      <div className="tl-inner" style={{ width: totalW }}>
+      <div className="tl-inner" style={{ width: LABEL_W + totalW }}>
         <div className="tl-ruler" style={{ height: RULER_H }}>
           {ticks.map((f) => (
-            <div key={f} className="tl-tick" style={{ left: f * PX_PER_FRAME }}>
+            <div key={f} className="tl-tick" style={{ left: LABEL_W + f * PX_PER_FRAME }}>
               <span>{Math.round(f / state.fps)}s</span>
             </div>
           ))}
@@ -136,7 +137,7 @@ export const TimelineStrip: React.FC<{
                 <div
                   key={clip.id}
                   className={'tl-clip ' + clip.kind + (selectedId === clip.id ? ' sel' : '')}
-                  style={{ left: clip.from * PX_PER_FRAME, width: clip.durationInFrames * PX_PER_FRAME }}
+                  style={{ left: LABEL_W + clip.from * PX_PER_FRAME, width: clip.durationInFrames * PX_PER_FRAME }}
                   title={clip.name}
                   onMouseDown={(e) => onClipDown(e, track.id, clip)}
                 >
@@ -149,7 +150,7 @@ export const TimelineStrip: React.FC<{
 
         <div
           className="tl-playhead"
-          style={{ left: currentFrame * PX_PER_FRAME, height: RULER_H + ordered.length * TRACK_H }}
+          style={{ left: LABEL_W + currentFrame * PX_PER_FRAME, height: RULER_H + ordered.length * TRACK_H }}
         />
       </div>
 

@@ -255,6 +255,8 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: no
 }
 .fp-hero-search:focus-within { border-color: var(--accent-line); }
 .fp-hero-search input { flex: 1; border: none; background: transparent; color: var(--text); font: inherit; font-size: 13px; padding: 9px 0; outline: none; }
+.fp-suggtoggle { margin: 10px auto 0; display: block; border: 1px solid var(--line); background: rgba(255,255,255,.025); color: var(--dim); font: inherit; font-size: 11px; font-weight: 500; padding: 4px 12px; border-radius: 99px; cursor: pointer; }
+.fp-suggtoggle:hover { color: var(--text); border-color: var(--border-strong); }
 .fp-chipnav { display: flex; gap: 6px; padding: 8px 14px 10px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; flex: 0 0 auto; }
 .fp-chipnav::-webkit-scrollbar { height: 0; }
 .fp-navpill { white-space: nowrap; flex: 0 0 auto; }
@@ -438,7 +440,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: no
 .tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); }
 .tl-tick span { position: absolute; left: 4px; top: 5px; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .tl-track { position: relative; border-bottom: 1px solid var(--line); }
-.tl-track-label { position: sticky; left: 0; z-index: 3; width: 34px; height: 100%; display: grid; place-items: center;
+.tl-track-label { position: sticky; left: 0; z-index: 6; width: 34px; height: 100%; display: grid; place-items: center;
   font-size: 11px; color: var(--dim); background: var(--panel); border-right: 1px solid var(--line); float: left; }
 .tl-clip {
   position: absolute; top: 5px; bottom: 5px; border-radius: 6px;

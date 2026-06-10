@@ -30,8 +30,11 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const [, force] = useState(0); // re-render tick for the progress estimate
   const [outOpen, setOutOpen] = useState(false);
   const [engOpen, setEngOpen] = useState(false);
+  const [hideSuggestions, setHideSuggestions] = useState(() => localStorage.getItem('flimifyStudio.hideSuggestions') === '1');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+
+  const toggleSuggestions = () => setHideSuggestions((h) => { const n = !h; try { localStorage.setItem('flimifyStudio.hideSuggestions', n ? '1' : '0'); } catch { /* ignore */ } return n; });
 
   const active = tabs.find((t) => t.id === activeId) || tabs[0];
 
@@ -365,12 +368,17 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
               <div className="fp-hero-logo">F</div>
               <h1>Your editing copilot</h1>
               <p>Ask for motion graphics, intros, or lower thirds. They render and drop onto your timeline.</p>
-              <div className="fp-hero-search">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-                <input value={active.chipQuery} onChange={(e) => patch(active.id, (t) => ({ ...t, chipQuery: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Escape') patch(active.id, (t) => ({ ...t, chipQuery: '' })); }} placeholder="Search suggestions…" />
-              </div>
+              {!hideSuggestions && (
+                <div className="fp-hero-search">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+                  <input value={active.chipQuery} onChange={(e) => patch(active.id, (t) => ({ ...t, chipQuery: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Escape') patch(active.id, (t) => ({ ...t, chipQuery: '' })); }} placeholder="Search suggestions…" />
+                </div>
+              )}
+              <button className="fp-suggtoggle" onClick={toggleSuggestions}>
+                {hideSuggestions ? '▾ Show suggestions' : '▴ Hide suggestions'}
+              </button>
             </div>
-            {!active.chipQuery && (
+            {!hideSuggestions && !active.chipQuery && (
               <div className="fp-chipnav">
                 {CATEGORIES.map((c) => (
                   <button key={c} className={'fp-navpill' + (c === active.chipCat ? ' active' : '') + (c === 'Popular' ? ' pop' : '')} onClick={() => patch(active.id, (t) => ({ ...t, chipCat: c }))}>
@@ -379,12 +387,14 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
                 ))}
               </div>
             )}
-            <div className="fp-chips">
-              {chips.length === 0 && <div className="fp-nomatch">No matches.</div>}
-              {chips.map((s) => (
-                <button key={s.label + s.cat} className="fp-chip" title={s.prompt} onClick={() => useChip(s.prompt)}>{s.label}</button>
-              ))}
-            </div>
+            {!hideSuggestions && (
+              <div className="fp-chips">
+                {chips.length === 0 && <div className="fp-nomatch">No matches.</div>}
+                {chips.map((s) => (
+                  <button key={s.label + s.cat} className="fp-chip" title={s.prompt} onClick={() => useChip(s.prompt)}>{s.label}</button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="fp-chatempty">
