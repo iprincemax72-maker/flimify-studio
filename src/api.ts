@@ -80,6 +80,12 @@ export async function caption(clipId: string, style = 'tiktok'): Promise<BridgeC
   return clip;
 }
 
+export async function deleteMedia(id: string): Promise<void> {
+  await post('/delete', { id });
+}
+
+export const thumbUrl = (id: string) => `${BRIDGE}/thumb/${id}`;
+
 /** Normalize a bridge clip → an editor timeline clip placed at `from`. */
 export function toTimelineClip(b: BridgeClip, from: number): Clip {
   return {

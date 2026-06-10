@@ -216,3 +216,21 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 .settings-toggle span::before { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 50%; transition: transform .22s cubic-bezier(.16,1,.3,1); }
 .settings-toggle input:checked + span { background: var(--accent); }
 .settings-toggle input:checked + span::before { transform: translateX(16px); }
+
+/* ───── History panel ───── */
+.hist-empty { color: var(--dim); font-size: 13px; padding: 20px 2px; }
+.hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.hist-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(255,255,255,.02); display: flex; flex-direction: column; }
+.hist-thumb { position: relative; aspect-ratio: 16/9; background: #050506 repeating-linear-gradient(45deg,#15161a,#15161a 8px,#101116 8px,#101116 16px); }
+.hist-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hist-badge { position: absolute; top: 7px; left: 7px; font-size: 9.5px; font-weight: 700; padding: 3px 7px; border-radius: 999px; color: #fff; letter-spacing: .03em; }
+.hist-badge.generate { background: var(--accent); }
+.hist-badge.import { background: #2f55c4; }
+.hist-badge.caption { background: #7a5bd0; }
+.hist-meta { padding: 9px 11px 4px; }
+.hist-name { font-size: 12.5px; color: var(--text); font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hist-sub { font-size: 10.5px; color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+.hist-actions { display: flex; gap: 6px; padding: 8px 11px 11px; margin-top: auto; }
+.hist-actions button { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-size: 11.5px; padding: 6px; border-radius: 7px; cursor: pointer; }
+.hist-actions button:hover { border-color: var(--accent); }
+.hist-actions button.danger:hover { border-color: #d7462e; color: #ff9a86; }

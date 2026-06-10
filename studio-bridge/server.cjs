@@ -137,6 +137,33 @@ const clipFromProbe = (id, name, meta) => ({
   hasAlpha: meta.hasAlpha,
 });
 
+// A small JPEG thumbnail for History cards (cached on disk). Grabs a frame ~25%
+// in, on a dark backdrop so transparent overlays read.
+function makeThumb(id) {
+  return new Promise((resolve) => {
+    const entry = registry[id];
+    if (!entry || !fs.existsSync(entry.path)) return resolve(null);
+    const out = path.join(WORK_DIR, 'thumb_' + id + '.jpg');
+    if (fs.existsSync(out)) return resolve(out);
+    const args = ['-y', '-ss', '0.3', '-i', entry.path,
+      '-frames:v', '1', '-vf', 'scale=320:-2', out];
+    const ff = spawn(FFMPEG, args, { stdio: 'ignore' });
+    const k = setTimeout(() => { try { ff.kill('SIGKILL'); } catch {} resolve(null); }, 15000);
+    ff.on('error', () => { clearTimeout(k); resolve(null); });
+    ff.on('close', (c) => { clearTimeout(k); resolve(c === 0 && fs.existsSync(out) ? out : null); });
+  });
+}
+
+function deleteMedia(id) {
+  const entry = registry[id];
+  if (!entry) return { ok: true, alreadyGone: true };
+  try { if (fs.existsSync(entry.path) && entry.path.startsWith(RENDER_DIR)) fs.unlinkSync(entry.path); } catch {}
+  try { fs.unlinkSync(path.join(WORK_DIR, 'thumb_' + id + '.jpg')); } catch {}
+  delete registry[id];
+  saveRegistry();
+  return { ok: true };
+}
+
 // ── AI overlay generation (no API key — local Claude CLI) ───────────────────
 // Compact system prompt: build a TRANSPARENT motion-graphic overlay and render
 // ProRes 4444 .mov to an exact path, then emit [[IMPORT:path]]. Mirrors the
@@ -348,6 +375,17 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT });
   if (req.method === 'GET' && u.startsWith('/media/')) return serveMedia(req, res, u.slice('/media/'.length));
+  if (req.method === 'GET' && u.startsWith('/thumb/')) {
+    const t = await makeThumb(u.slice('/thumb/'.length));
+    if (!t) { res.writeHead(404, { 'Access-Control-Allow-Origin': '*' }); return res.end(); }
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'max-age=3600' });
+    return fs.createReadStream(t).pipe(res);
+  }
+  if (req.method === 'POST' && u === '/delete') {
+    const { id } = await readBody(req);
+    if (!id) return sendJson(res, 400, { error: 'no id' });
+    return sendJson(res, 200, deleteMedia(id));
+  }
   if (req.method === 'POST' && u === '/import') {
     const { path: src } = await readBody(req);
     if (!src || !fs.existsSync(src)) return sendJson(res, 400, { error: 'file not found' });

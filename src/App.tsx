@@ -9,9 +9,11 @@ import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
 import type { Clip, EditorState, Track, TrackType } from './editor/types';
 import { MAX_TRACKS, relabelTracks } from './editor/types';
-import { health, importPath, exportTimeline, caption, toTimelineClip, type BridgeClip } from './api';
+import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
+import { HistoryPanel } from './panels/HistoryPanel';
 import { loadSettings, saveSettings, applySettings, aspectDims, type Settings } from './settings';
+import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
 import './App.css';
 
 const FPS = 30;
@@ -52,7 +54,17 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const playerRef = useRef<PlayerRef>(null);
+
+  const addHistory = (clip: BridgeClip, kind: HistoryKind, prompt?: string) => {
+    setHistory((h) => {
+      const next = [entryFromClip(clip, kind, prompt), ...h.filter((e) => e.id !== clip.id)];
+      saveHistory(next);
+      return next;
+    });
+  };
 
   // apply + persist appearance/defaults live
   useEffect(() => { applySettings(settings); saveSettings(settings); }, [settings]);
@@ -127,6 +139,7 @@ export default function App() {
     try {
       const clip = await importPath(p);
       setBin((b) => [clip, ...b]);
+      addHistory(clip, 'import');
       setState((s) => {
         const base = s.tracks.find((t) => t.type === 'video')!;
         const at = base.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
@@ -178,6 +191,7 @@ export default function App() {
   // ── generated overlay → top video track at the playhead ──
   const onGenerated = (b: BridgeClip) => {
     setBin((x) => [b, ...x]);
+    addHistory(b, 'generate', b.name.replace(/^AI · /, ''));
     addClip(overlayTrackId(), toTimelineClip(b, frame));
   };
 
@@ -232,6 +246,7 @@ export default function App() {
     setStatus('Auto-captioning — transcribing + rendering…');
     try {
       const cap = await caption(clip.id, 'tiktok');
+      addHistory(cap, 'caption');
       addClip(overlayTrackId(), toTimelineClip(cap, clip.from));
       setStatus('Captions added to V2');
     } catch (e) {
@@ -239,6 +254,25 @@ export default function App() {
     } finally {
       setCaptioning(false);
     }
+  };
+
+  // ── History: re-add a past render, or delete it from disk + history ──
+  const onHistoryAdd = (e: HistoryEntry) => {
+    const clip: BridgeClip = {
+      id: e.id, kind: 'video', name: e.name, src: e.src,
+      width: e.width, height: e.height, fps: e.fps, durationFrames: e.durationFrames, hasAlpha: false,
+    };
+    const trackId = e.kind === 'import' ? (state.tracks.find((t) => t.type === 'video')?.id || 'v1') : overlayTrackId();
+    addClip(trackId, toTimelineClip(clip, e.kind === 'import' ? 0 : frame));
+  };
+  const onHistoryDelete = async (e: HistoryEntry) => {
+    try { await deleteMedia(e.id); } catch { /* ignore — still drop from UI */ }
+    setHistory((h) => { const n = h.filter((x) => x.id !== e.id); saveHistory(n); return n; });
+    setBin((b) => b.filter((c) => c.id !== e.id));
+    setState((s) => {
+      const tracks = s.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => !('src' in c) || c.src !== e.src) }));
+      return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
   };
 
   const seek = (f: number) => playerRef.current?.seekTo(f);
@@ -274,6 +308,9 @@ export default function App() {
           {status && <span className="status"> · {status}</span>}
         </div>
         <div className="topbar-right">
+          <button className="btn icon" onClick={() => setHistoryOpen(true)} title="History" aria-label="History">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+          </button>
           <button className="btn icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
@@ -353,6 +390,9 @@ export default function App() {
 
       {settingsOpen && (
         <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+      )}
+      {historyOpen && (
+        <HistoryPanel history={history} onClose={() => setHistoryOpen(false)} onAdd={onHistoryAdd} onDelete={onHistoryDelete} />
       )}
     </div>
   );
