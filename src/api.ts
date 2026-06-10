@@ -95,8 +95,9 @@ export async function authReconnect(): Promise<AuthStatus> {
   return r.json();
 }
 /** Begin Google sign-in — returns the redirect URL (the extension's allow-listed
- *  /connect when its bridge is up) + the current status (shared session). */
-export async function authBeginSignin(): Promise<{ url: string; viaExt: boolean; status: AuthStatus }> {
+ *  /connect when its bridge is up). Sign-in is confirmed by polling authStatus
+ *  until the freshly-picked account appears (never reports a stale session). */
+export async function authBeginSignin(): Promise<{ url: string; viaExt: boolean; pending: boolean }> {
   const r = await fetch(BRIDGE + '/auth/begin-signin', { method: 'POST' });
   return r.json();
 }

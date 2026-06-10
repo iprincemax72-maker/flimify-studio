@@ -32,20 +32,30 @@ export const Account: React.FC = () => {
   // bridge is up, shares the session, and signs in immediately if one exists.
   const signIn = async () => {
     setPending(true);
+    // Remember who we're replacing — sign-in is "done" only when a DIFFERENT
+    // account shows up (or any account, if we were signed out). This is what
+    // stops the old shared account from being reported as a successful login.
+    const prevEmail = status?.email || '';
     try {
-      const { url, status } = await authBeginSignin();
-      if (status?.signedIn) { setStatus(status); toast('Signed in as ' + (status.name || status.email) + '.'); }
+      const { url } = await authBeginSignin();
       openUrl(url);  // opens Google's "choose an account" in the browser
     } catch { /* ignore */ }
-    // keep polling so an account switch in the browser reflects here
     let tries = 0;
     clearInterval(pollRef.current);
     pollRef.current = window.setInterval(async () => {
       tries++;
-      try { const s = await authStatus(); if (s.signedIn) setStatus(s); } catch { /* ignore */ }
-      if (tries > 90) clearInterval(pollRef.current);
+      try {
+        const s = await authStatus();
+        if (s.signedIn && s.email && s.email !== prevEmail) {
+          setStatus(s);
+          toast('Signed in as ' + (s.name || s.email) + '.');
+          setPending(false);
+          clearInterval(pollRef.current);
+          return;
+        }
+      } catch { /* ignore */ }
+      if (tries > 150) { clearInterval(pollRef.current); setPending(false); }  // ~5 min
     }, 2000);
-    setTimeout(() => setPending(false), 1400);
   };
   // "Resume" — re-use the existing/extension session without the picker.
   const resume = async () => {

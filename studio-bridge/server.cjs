@@ -626,8 +626,39 @@ function saveSession(s) {
 }
 function clearSession() {
   _session = null;
+  _pendingSignin = null;
   try { fs.unlinkSync(SESSION_FILE); } catch {}
   try { fs.writeFileSync(SIGNED_OUT_MARKER, '1'); } catch {}   // sticks across the shared-session fallback
+}
+
+// An in-progress Google sign-in. prevTokens = every access_token already on disk
+// when sign-in began; a NEW login is any token that ISN'T one of those (so we
+// adopt the account the user actually picks, never the stale shared/extension
+// one they're replacing). { since:seconds, prevTokens:Set<string> }
+let _pendingSignin = null;
+
+// Read every session file straight from disk — bypasses the in-memory cache AND
+// the sign-out marker. Used to spot a brand-new login the moment it lands.
+function rawSessions() {
+  const out = [];
+  for (const f of [SESSION_FILE, ...SHARED_SESSION_FILES]) {
+    try { if (fs.existsSync(f)) { const s = JSON.parse(fs.readFileSync(f, 'utf8')); if (s && s.access_token) out.push(s); } } catch {}
+  }
+  return out;
+}
+
+// If a sign-in is pending and a session with an unseen token has appeared,
+// adopt the newest one as the real Studio session. No-op otherwise; gives up
+// after 5 minutes so a cancelled sign-in doesn't wedge.
+function adoptNewSigninIfAny() {
+  if (!_pendingSignin) return;
+  if (Math.floor(Date.now() / 1000) - _pendingSignin.since > 300) { _pendingSignin = null; return; }
+  const fresh = rawSessions().filter((s) => !_pendingSignin.prevTokens.has(s.access_token));
+  if (!fresh.length) return;
+  fresh.sort((a, b) => (b.expires_at || 0) - (a.expires_at || 0));   // newest login wins
+  _pendingSignin = null;
+  saveSession(fresh[0]);   // → Studio's own file, clears the marker, updates the cache
+  log('signed in (picked account): ' + ((fresh[0].user && fresh[0].user.email) || '?'));
 }
 // Is the Premiere extension's bridge up? Its /connect is the redirect Supabase
 // already allow-lists, so we route Studio's Google sign-in through it.
@@ -666,6 +697,7 @@ async function freshToken() {
   return _refreshing;
 }
 async function authStatus() {
+  adoptNewSigninIfAny();   // pick up a freshly-chosen account before reporting
   const s = loadSession();
   const base = { enabled: true, signedIn: false, owner: false, unlimited: true, plan: 'local', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 0, site: SITE_URL, dashboard: DASHBOARD_URL };
   if (!s || !s.access_token) return base;
@@ -752,6 +784,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && u === '/auth/session') {
     const p = await readBody(req);
     if (!p.access_token) return sendJson(res, 400, { error: 'no token' });
+    _pendingSignin = null;   // explicit capture from Studio's own /connect
     saveSession({ access_token: p.access_token, refresh_token: p.refresh_token || '', expires_at: p.expires_at || 0, user: p.user || null });
     log('signed in: ' + ((p.user && p.user.email) || '?'));
     return sendJson(res, 200, { ok: true });
@@ -763,23 +796,26 @@ const server = http.createServer(async (req, res) => {
   }
   // Clear the explicit sign-out so a shared (extension) session is picked up again.
   if (req.method === 'POST' && u === '/auth/reconnect') {
+    _pendingSignin = null;
     try { fs.unlinkSync(SIGNED_OUT_MARKER); } catch {}
     _session = null;
     const st = await authStatus();
     if (st.signedIn) log('reconnected: ' + st.email);
     return sendJson(res, 200, st);
   }
-  // Begin Google sign-in: clear the sign-out, pick the redirect that actually
-  // works — the extension's allow-listed /connect if its bridge is up, else
-  // Studio's own. Returns the URL + the (possibly already-signed-in) status.
+  // Begin Google sign-in: snapshot the tokens already on disk so we only accept
+  // the NEW account the user picks (never the stale shared/extension one), then
+  // pick the redirect that actually works — the extension's allow-listed
+  // /connect if its bridge is up, else Studio's own. We deliberately do NOT
+  // clear the sign-out marker here (that's what used to flash the old account);
+  // it's cleared only once the freshly-picked session is adopted.
   if (req.method === 'POST' && u === '/auth/begin-signin') {
-    try { fs.unlinkSync(SIGNED_OUT_MARKER); } catch {}
+    _pendingSignin = { since: Math.floor(Date.now() / 1000), prevTokens: new Set(rawSessions().map((s) => s.access_token)) };
     _session = null;
     const viaExt = await extBridgeUp();
     const url = viaExt ? (EXT_BRIDGE + '/connect?reauth=1') : ('http://localhost:' + PORT + '/connect?reauth=1');
-    const status = await authStatus();
-    log('begin-signin via ' + (viaExt ? 'extension(3737)' : 'studio(3939)'));
-    return sendJson(res, 200, { url, viaExt, status });
+    log('begin-signin via ' + (viaExt ? 'extension(3737)' : 'studio(3939)') + ' — awaiting picked account');
+    return sendJson(res, 200, { url, viaExt, pending: true });
   }
   if (req.method === 'GET' && (u === '/connect' || u.startsWith('/connect?'))) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
