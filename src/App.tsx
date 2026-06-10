@@ -179,6 +179,8 @@ export default function App() {
   useEffect(() => {
     if (!features.engine && settings.engine !== 'remotion') patchSettings({ engine: 'remotion' });
   }, [features.engine, settings.engine]);
+  // auto-update landed (desktop hot-reload) → confirm it visibly
+  useEffect(() => { window.flimify?.onUpdated?.(() => toast('Updated to the latest version ✓')); }, []);
 
   // sync playhead/readout to the Player
   useEffect(() => {

@@ -731,30 +731,25 @@ function featuresFor(plan, owner) {
   };
 }
 
-// Resolve the caller's plan + feature flags. Owners are always Studio. Others
-// get their real Supabase tier (my_usage RPC), cached so a transient RPC failure
-// never downgrades a paying user to free mid-session.
+// Resolve the caller's plan + feature flags. STRICT allowlist: ONLY the owner
+// emails (OWNER_EMAILS) get owner = Studio = unlimited + every feature. EVERY
+// other account — signed in or not, whatever their Supabase plan — is 'free':
+// features locked, NOT unlimited. No account other than the owners is ever
+// elevated.
 async function resolvePlan() {
   const s = loadSession();
   if (!s || !s.access_token) return { plan: 'free', owner: false, features: featuresFor('free', false) };
   const email = (s.user && s.user.email) || '';
   const owner = !!email && OWNER_EMAILS.includes(email.toLowerCase());
-  if (owner) { _planCache = { plan: 'studio', at: Date.now() }; return { plan: 'studio', owner: true, features: featuresFor('studio', true) }; }
-  const token = await freshToken();
-  let plan = 'free';
-  if (token) {
-    const usage = await supaRPC('my_usage', token);
-    const u = Array.isArray(usage) ? usage[0] : usage;
-    if (u && u.plan) { plan = u.plan; _planCache = { plan: u.plan, at: Date.now() }; }
-    else if (_planCache.plan && Date.now() - _planCache.at < 5 * 60000) { plan = _planCache.plan; }   // keep last-known good
-  }
-  return { plan, owner: false, features: featuresFor(plan, false) };
+  return owner
+    ? { plan: 'studio', owner: true, features: featuresFor('studio', true) }
+    : { plan: 'free', owner: false, features: featuresFor('free', false) };
 }
 
 async function authStatus() {
   adoptNewSigninIfAny();   // pick up a freshly-chosen account before reporting
   const s = loadSession();
-  const base = { enabled: true, signedIn: false, owner: false, unlimited: true, plan: 'free', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 0, site: SITE_URL, dashboard: DASHBOARD_URL, features: featuresFor('free', false) };
+  const base = { enabled: true, signedIn: false, owner: false, unlimited: false, plan: 'free', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 5, site: SITE_URL, dashboard: DASHBOARD_URL, features: featuresFor('free', false) };
   if (!s || !s.access_token) return base;
   const token = await freshToken();
   if (!token) return base;
@@ -766,7 +761,7 @@ async function authStatus() {
     enabled: true, signedIn: true, email,
     name: meta.full_name || meta.name || email || 'Account',
     avatar: meta.avatar_url || meta.picture || '',
-    owner, unlimited: true,                       // your own Claude → unlimited renders
+    owner, unlimited: owner,                      // ONLY owners get unlimited (∞) — everyone else is metered free
     plan, features,
     renders_used: 0, renders_limit: owner ? 999999 : 5,
     site: SITE_URL, dashboard: DASHBOARD_URL,

@@ -49,8 +49,30 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
   `~/FlimifyStudio/session.json`. For this to complete, Supabase **Redirect URLs
   must include `http://localhost:3939/connect`** (the extension's is `:3737`).
 - The dashboard/manage link text is **"Dashboard"**, URL `…/account.html`.
-- Generation is always unlimited (own Claude); sign-in is optional — no blocking
-  login wall on desktop.
+- sign-in is optional — no blocking login wall on desktop.
+
+## Plan gating — STRICT owner allowlist (do NOT loosen)
+- **ONLY** the two `OWNER_EMAILS` (`iprincemax72@gmail.com`, `anshdhakad9@gmail.com`)
+  are `owner` → `plan: 'studio'`, `unlimited: true` (∞ renders), and **every**
+  feature unlocked (Auto-Edit, Captions, engine switch, all versions).
+- **Every other account** — signed in or not, whatever its Supabase plan — is
+  `plan: 'free'`: `unlimited: false`, render limit 5, and features LOCKED
+  (Auto-Edit/Captions show 🔒 + upsell). NO account other than the two owners is
+  ever elevated; there is **no `my_usage`/Supabase-plan path that grants access**
+  (`resolvePlan` is a pure owner-vs-free check). Don't add infinite renders for
+  everyone. `unlimited` is `owner`, never `true` blanket.
+
+## Auto-update (desktop) — you usually DON'T repackage
+- The packaged app loads its **frontend (dist) + bridge (server.cjs) from a
+  writable overlay** `~/FlimifyStudio/app/`, seeded from the bundle on first run,
+  then auto-synced from this repo (`FLIMIFY_UPDATE_SOURCE`, default
+  `~/All Claude Work/flimify-studio`). It polls every 45s and **hot-reloads**.
+- **To ship a fix:** edit the repo + `npm run build` (and/or edit
+  `studio-bridge/server.cjs`). The running app picks it up within ~45s, reloads
+  the window (toast "Updated…"), and restarts the bridge if it changed. **No
+  `electron-builder`, no re-download.** Help → "Check for Updates…" forces it.
+- **Only changes to `electron/main.cjs` or `electron/preload.cjs`** need a real
+  `npx electron-builder --mac --dir` + relaunch (they load from the bundle).
 
 ## Security
 - The user pasted API keys in chat earlier (Hera, Submagic). NEVER persist or

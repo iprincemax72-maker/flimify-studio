@@ -6,6 +6,7 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 
 const isDev = !app.isPackaged;
@@ -13,14 +14,78 @@ const DEV_URL = process.env.ELECTRON_RENDERER_URL || 'http://localhost:5191';
 let bridgeProc = null;
 let mainWin = null;
 
+// ── SELF-UPDATE (writable overlay) ──────────────────────────────────────────
+// The packaged app loads its frontend (dist) AND its bridge (server.cjs) from a
+// WRITABLE folder, seeded from the app bundle on first run, then auto-synced from
+// the local repo. So shipping a fix = rebuild dist in the repo — the running app
+// picks it up within ~45s and hot-reloads, no reinstall / re-download. When the
+// repo isn't present (a distributed copy on someone else's machine) it just keeps
+// using the bundle. Only main.cjs/preload.cjs changes still need a real reinstall.
+const LIVE_DIR = path.join(os.homedir(), 'FlimifyStudio', 'app');
+const LIVE_DIST = path.join(LIVE_DIR, 'dist');
+const LIVE_BRIDGE = path.join(LIVE_DIR, 'server.cjs');
+const BUNDLED_DIST = path.join(__dirname, '..', 'dist');
+const BUNDLED_BRIDGE = path.join(__dirname, '..', 'studio-bridge', 'server.cjs').replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+const UPDATE_SOURCE = process.env.FLIMIFY_UPDATE_SOURCE || path.join(os.homedir(), 'All Claude Work', 'flimify-studio');
+const SRC_DIST = path.join(UPDATE_SOURCE, 'dist');
+const SRC_BRIDGE = path.join(UPDATE_SOURCE, 'studio-bridge', 'server.cjs');
+let _pendingUpdateToast = false;
+
+function _copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name), d = path.join(dest, e.name);
+    if (e.isDirectory()) _copyDir(s, d); else fs.copyFileSync(s, d);
+  }
+}
+const _read = (p) => { try { return fs.readFileSync(p); } catch { return null; } };
+const _differs = (a, b) => { const x = _read(a), y = _read(b); if (!x || !y) return !!x !== !!y; return !x.equals(y); };
+// Swap in a fresh dist atomically (tmp + rename) so a reload never reads a half-written bundle.
+function _replaceDist(srcDist) {
+  const tmp = LIVE_DIST + '.tmp';
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  _copyDir(srcDist, tmp);
+  try { fs.rmSync(LIVE_DIST, { recursive: true, force: true }); } catch {}
+  fs.renameSync(tmp, LIVE_DIST);
+}
+function seedOverlay() {
+  try {
+    if (!fs.existsSync(path.join(LIVE_DIST, 'index.html'))) {
+      _replaceDist(BUNDLED_DIST); fs.copyFileSync(BUNDLED_BRIDGE, LIVE_BRIDGE);
+    } else if (!fs.existsSync(path.join(SRC_DIST, 'index.html')) && _differs(path.join(LIVE_DIST, 'index.html'), path.join(BUNDLED_DIST, 'index.html'))) {
+      // a freshly-installed .app (bundle differs, no repo to override) wins
+      _replaceDist(BUNDLED_DIST); fs.copyFileSync(BUNDLED_BRIDGE, LIVE_BRIDGE);
+    }
+  } catch (e) { console.error('[update] seed failed:', e && e.message); }
+}
+function syncFromSource() {
+  const out = { distChanged: false, bridgeChanged: false };
+  try {
+    const srcIdx = path.join(SRC_DIST, 'index.html');
+    if (fs.existsSync(srcIdx) && _differs(srcIdx, path.join(LIVE_DIST, 'index.html'))) { _replaceDist(SRC_DIST); out.distChanged = true; }
+    if (fs.existsSync(SRC_BRIDGE) && _differs(SRC_BRIDGE, LIVE_BRIDGE)) { fs.copyFileSync(SRC_BRIDGE, LIVE_BRIDGE); out.bridgeChanged = true; }
+  } catch (e) { console.error('[update] sync failed:', e && e.message); }
+  return out;
+}
+function applyUpdate(changed, announce) {
+  if (changed.bridgeChanged) restartBridge();
+  if (changed.distChanged && mainWin) { _pendingUpdateToast = true; try { mainWin.webContents.reload(); } catch {} }
+  if (announce && !changed.distChanged && !changed.bridgeChanged) {
+    try { dialog.showMessageBox(mainWin, { type: 'info', title: 'Flimify Studio', message: 'You’re on the latest version.', buttons: ['OK'] }); } catch {}
+  } else if (announce) {
+    try { dialog.showMessageBox(mainWin, { type: 'info', title: 'Flimify Studio', message: 'Updated to the latest version.', buttons: ['OK'] }); } catch {}
+  }
+}
+// Active paths: prefer the writable overlay, fall back to the bundle.
+const activeDistIndex = () => fs.existsSync(path.join(LIVE_DIST, 'index.html')) ? path.join(LIVE_DIST, 'index.html') : path.join(BUNDLED_DIST, 'index.html');
+const activeBridge = () => fs.existsSync(LIVE_BRIDGE) ? LIVE_BRIDGE : BUNDLED_BRIDGE;
+
 // Launch the studio-bridge using THIS Electron binary in pure-Node mode
 // (ELECTRON_RUN_AS_NODE) so no separate node install is required when packaged.
 function startBridge() {
   // In the packaged app the code lives inside app.asar; a Node script can't be
   // spawned from an asar path, so resolve to the unpacked copy (asarUnpack).
-  const serverPath = path
-    .join(__dirname, '..', 'studio-bridge', 'server.cjs')
-    .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+  const serverPath = activeBridge();
   if (!fs.existsSync(serverPath)) { console.error('[main] studio-bridge not found at', serverPath); return; }
   console.log('[main] starting bridge:', serverPath);
   bridgeProc = spawn(process.execPath, [serverPath], {
@@ -61,7 +126,12 @@ function createWindow() {
   mainWin = win;
   win.once('ready-to-show', () => win.show());
   if (isDev) win.loadURL(DEV_URL);
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  else win.loadFile(activeDistIndex());
+
+  // after a hot-update reload, tell the renderer so it can toast "Updated".
+  win.webContents.on('did-finish-load', () => {
+    if (_pendingUpdateToast) { _pendingUpdateToast = false; setTimeout(() => { try { win.webContents.send('app-updated'); } catch {} }, 700); }
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
@@ -127,7 +197,7 @@ function buildMenu() {
         { label: 'Flimify Website', click: () => shell.openExternal('https://www.flimify.com') },
         { type: 'separator' },
         { label: 'Restart Engine', click: () => restartBridge() },
-        { label: 'Check for Updates…', click: () => shell.openExternal('https://github.com/iprincemax72-maker/claude-extension-premiere-pro-2026/releases') },
+        { label: 'Check for Updates…', click: () => { if (isDev) return; applyUpdate(syncFromSource(), true); } },
         ...(isMac ? [] : [{ type: 'separator' }, { label: 'About', click: aboutBox }]),
       ],
     },
@@ -151,9 +221,12 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) {
     try { app.dock.setIcon(path.join(__dirname, '..', 'build', 'icon.png')); } catch {}
   }
+  if (!isDev) { seedOverlay(); syncFromSource(); }   // make the overlay current BEFORE we load it
   buildMenu();
   startBridge();
   createWindow();
+  // poll the repo for new builds and hot-apply them (no reinstall)
+  if (!isDev) setInterval(() => { try { applyUpdate(syncFromSource(), false); } catch {} }, 45000);
 });
 app.on('before-quit', stopBridge);
 app.on('window-all-closed', () => { stopBridge(); if (process.platform !== 'darwin') app.quit(); });

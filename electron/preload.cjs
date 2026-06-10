@@ -20,4 +20,6 @@ contextBridge.exposeInMainWorld('flimify', {
   // restart the local engine (bridge) — exposed for the offline status pill
   restartEngine: () => ipcRenderer.invoke('restart-engine'),
   onEngineRestarted: (cb) => ipcRenderer.on('engine-restarted', () => cb()),
+  // fired after the app hot-updates itself from a new build (auto-update)
+  onUpdated: (cb) => ipcRenderer.on('app-updated', () => cb()),
 });

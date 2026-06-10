@@ -31,6 +31,7 @@ declare global {
       getPathForFile?: (file: File) => string | null;
       restartEngine?: () => Promise<boolean>;
       onEngineRestarted?: (cb: () => void) => void;
+      onUpdated?: (cb: () => void) => void;
     };
   }
 }
