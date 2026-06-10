@@ -10,6 +10,8 @@ import { FlimifyPanel } from './panels/FlimifyPanel';
 import type { Clip, EditorState, Track, TrackType } from './editor/types';
 import { MAX_TRACKS, relabelTracks } from './editor/types';
 import { health, importPath, exportTimeline, caption, toTimelineClip, type BridgeClip } from './api';
+import { SettingsPanel } from './panels/SettingsPanel';
+import { loadSettings, saveSettings, applySettings, aspectDims, type Settings } from './settings';
 import './App.css';
 
 const FPS = 30;
@@ -48,7 +50,13 @@ export default function App() {
   const [online, setOnline] = useState<boolean | null>(null);
   const [status, setStatus] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const playerRef = useRef<PlayerRef>(null);
+
+  // apply + persist appearance/defaults live
+  useEffect(() => { applySettings(settings); saveSettings(settings); }, [settings]);
+  const patchSettings = (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch }));
 
   // bridge health
   useEffect(() => {
@@ -266,6 +274,9 @@ export default function App() {
           {status && <span className="status"> · {status}</span>}
         </div>
         <div className="topbar-right">
+          <button className="btn icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
           <button className="btn" onClick={onCaption} disabled={captioning}>
             {captioning ? 'Captioning…' : 'Captions'}
           </button>
@@ -319,7 +330,13 @@ export default function App() {
 
         <aside className="panel flimify">
           <div className="panel-h">Flimify</div>
-          <FlimifyPanel width={state.width} height={state.height} onClip={onGenerated} />
+          <FlimifyPanel
+            width={aspectDims(settings.aspect, state.width, state.height)[0]}
+            height={aspectDims(settings.aspect, state.width, state.height)[1]}
+            durationSec={settings.duration === 'auto' ? 4 : Number(settings.duration)}
+            defaultEngine={settings.engine}
+            onClip={onGenerated}
+          />
         </aside>
       </div>
 
@@ -333,6 +350,10 @@ export default function App() {
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
       />
+
+      {settingsOpen && (
+        <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+      )}
     </div>
   );
 }

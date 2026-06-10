@@ -9,10 +9,12 @@ type Engine = 'remotion' | 'hyperframes';
 export const FlimifyPanel: React.FC<{
   width: number;
   height: number;
+  durationSec?: number;
+  defaultEngine?: Engine;
   onClip: (clip: BridgeClip) => void;
-}> = ({ width, height, onClip }) => {
+}> = ({ width, height, durationSec = 4, defaultEngine = 'remotion', onClip }) => {
   const [prompt, setPrompt] = useState('');
-  const [engine, setEngine] = useState<Engine>('remotion');
+  const [engine, setEngine] = useState<Engine>(defaultEngine);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<{ role: 'you' | 'flimify'; text: string }[]>([
     { role: 'flimify', text: 'Describe a graphic — a lower-third, a title, a callout. I’ll generate it and drop it on the timeline.' },
@@ -26,7 +28,7 @@ export const FlimifyPanel: React.FC<{
     setBusy(true);
     setLog((l) => [...l, { role: 'flimify', text: 'Generating… (running on your Claude — no API key)' }]);
     try {
-      const clip = await generate(p, engine, width, height, 4);
+      const clip = await generate(p, engine, width, height, durationSec);
       onClip(clip);
       setLog((l) => [...l.slice(0, -1), { role: 'flimify', text: '✓ Added “' + clip.name + '” to V2.' }]);
     } catch (e) {
