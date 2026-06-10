@@ -19,6 +19,10 @@ export type VideoClip = ClipBase & {
   src: string;
   /** trim frames off the source head (v4 name; not the deprecated startFrom) */
   trimBefore?: number;
+  /** mute the video's own audio (footage audio is split onto a linked A-clip) */
+  muted?: boolean;
+  /** links footage video + its split audio clip so they delete together */
+  linkId?: string;
 };
 
 /** A live React/Remotion overlay (an AI graphic before it's flattened). */
@@ -28,11 +32,13 @@ export type TitleClip = ClipBase & {
   color?: string;
 };
 
-/** An audio-only clip on an A-track (music, voiceover). */
+/** An audio-only clip on an A-track (music, voiceover, or split footage audio). */
 export type AudioClip = ClipBase & {
   kind: 'audio';
   src: string;
   trimBefore?: number;
+  /** links split footage audio back to its video clip */
+  linkId?: string;
 };
 
 export type Clip = VideoClip | TitleClip | AudioClip;

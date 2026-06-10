@@ -76,7 +76,8 @@ function probe(file) {
       if (err) return resolve(null);
       try {
         const j = JSON.parse(out || '{}');
-        const v = (j.streams || []).find((s) => s.codec_type === 'video') || {};
+        const streams = j.streams || [];
+        const v = streams.find((s) => s.codec_type === 'video') || {};
         const dur = Number(j.format && j.format.duration) || 0;
         const fr = String(v.r_frame_rate || '30/1').split('/');
         const fps = (+fr[0] && +fr[1]) ? (+fr[0] / +fr[1]) : 30;
@@ -86,6 +87,7 @@ function probe(file) {
           durationSec: dur,
           fps,
           hasAlpha: /yuva|rgba|argb/i.test(v.pix_fmt || ''),
+          hasAudio: streams.some((s) => s.codec_type === 'audio'),
         });
       } catch { resolve(null); }
     });
@@ -209,6 +211,7 @@ const clipFromProbe = (id, name, meta) => ({
   width: meta.width, height: meta.height, fps: meta.fps,
   durationFrames: Math.max(1, Math.round(meta.durationSec * FPS)),
   hasAlpha: meta.hasAlpha,
+  hasAudio: !!meta.hasAudio,
 });
 
 // A small JPEG thumbnail for History cards (cached on disk). Grabs a frame ~25%
@@ -690,7 +693,7 @@ const CONNECT_HTML = '<!doctype html><html><head><meta charset="utf-8"><meta nam
 const server = http.createServer(async (req, res) => {
   const u = req.url || '/';
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Filename' });
     return res.end();
   }
   if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT, web: fs.existsSync(DIST_DIR) });

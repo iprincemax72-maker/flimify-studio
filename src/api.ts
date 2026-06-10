@@ -16,6 +16,7 @@ export type BridgeClip = {
   fps: number;
   durationFrames: number;
   hasAlpha: boolean;
+  hasAudio?: boolean;
 };
 
 declare global {

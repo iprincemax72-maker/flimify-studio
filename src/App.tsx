@@ -166,7 +166,13 @@ export default function App() {
   const deleteSelected = () => {
     if (!selectedId) return;
     setState((s) => {
-      const tracks = s.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }));
+      // also remove a linked partner (footage video ↔ its split audio)
+      let linkId: string | undefined;
+      for (const t of s.tracks) for (const c of t.clips) if (c.id === selectedId) linkId = (c as { linkId?: string }).linkId;
+      const tracks = s.tracks.map((t) => ({
+        ...t,
+        clips: t.clips.filter((c) => c.id !== selectedId && !(linkId && (c as { linkId?: string }).linkId === linkId)),
+      }));
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
     });
     setSelectedId(null);
@@ -186,16 +192,22 @@ export default function App() {
   }, [selectedId]);
 
   // ── import footage (shared by the button, menu, and drag-drop) ──
-  // land a freshly-imported/uploaded clip onto the bin + the base video track
+  // land a freshly-imported/uploaded clip onto the bin + the base video track,
+  // splitting its audio onto a linked clip on A1 (so you can see/move/mute it).
   const landImportedClip = (clip: BridgeClip) => {
     setBin((b) => [clip, ...b]);
     addHistory(clip, 'import');
     setState((s) => {
-      const base = s.tracks.find((t) => t.type === 'video')!;
-      const at = base.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
-      const tracks = s.tracks.map((t) =>
-        t.id === base.id ? { ...t, clips: [...t.clips, toTimelineClip(clip, at)] } : t,
-      );
+      const baseV = s.tracks.find((t) => t.type === 'video')!;
+      const at = baseV.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0);
+      const linkId = clip.hasAudio ? 'lnk_' + clip.id : undefined;
+      const videoClip: Clip = { ...toTimelineClip(clip, at), muted: !!clip.hasAudio, linkId } as Clip;
+      let tracks = s.tracks.map((t) => (t.id === baseV.id ? { ...t, clips: [...t.clips, videoClip] } : t));
+      const baseA = s.tracks.find((t) => t.type === 'audio');
+      if (clip.hasAudio && baseA) {
+        const audioClip: Clip = { id: clip.id + '_a', kind: 'audio', name: clip.name, src: clip.src, from: at, durationInFrames: clip.durationFrames, linkId };
+        tracks = tracks.map((t) => (t.id === baseA.id ? { ...t, clips: [...t.clips, audioClip] } : t));
+      }
       return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
     });
   };

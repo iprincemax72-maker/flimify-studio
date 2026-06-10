@@ -14,6 +14,7 @@ const ClipView: React.FC<{ clip: Clip }> = ({ clip }) => {
       <OffthreadVideo
         src={clip.src}
         trimBefore={clip.trimBefore}
+        muted={clip.muted}
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />
     );
