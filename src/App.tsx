@@ -12,6 +12,8 @@ import { MAX_TRACKS, relabelTracks } from './editor/types';
 import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
+import { CaptionsModal } from './panels/CaptionsModal';
+import type { CaptionOptions } from './api';
 import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, SETTINGS_DEFAULTS, type Settings } from './settings';
 import { configureParticles } from './particles';
 import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
@@ -281,24 +283,26 @@ export default function App() {
     }
   };
 
-  // ── auto-captions: transcribe V1 footage → animated caption track on V2 ──
+  // ── captions studio: transcribe footage → animated caption track ──
   const [captioning, setCaptioning] = useState(false);
-  const onCaption = async () => {
-    const clip = state.tracks
-      .filter((t) => t.type === 'video')
-      .flatMap((t) => t.clips)
-      .find((c) => c.kind === 'video');
-    if (!clip) { setStatus('Import footage first'); return; }
-    if (captioning) return;
+  const [captionsOpen, setCaptionsOpen] = useState(false);
+  const openCaptions = () => {
+    const clip = state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
+    if (!clip) { toast('Import footage first to caption it.', true); return; }
+    setCaptionsOpen(true);
+  };
+  const runCaptions = async (style: string, wordsPerLine: number, options: CaptionOptions) => {
+    const clip = state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
+    if (!clip) { toast('Import footage first.', true); setCaptionsOpen(false); return; }
     setCaptioning(true);
-    setStatus('Auto-captioning — transcribing + rendering…');
     try {
-      const cap = await caption(clip.id, 'tiktok');
+      const cap = await caption(clip.id, style, wordsPerLine, options);
       addHistory(cap, 'caption');
       addClip(overlayTrackId(), toTimelineClip(cap, clip.from));
-      setStatus('Captions added to V2');
+      toast('Captions added to ' + overlayLabel() + '.');
+      setCaptionsOpen(false);
     } catch (e) {
-      setStatus('Captions failed: ' + (e as Error).message);
+      toast('Captions failed: ' + (e as Error).message, true);
     } finally {
       setCaptioning(false);
     }
@@ -377,7 +381,7 @@ export default function App() {
           <button className="btn icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
-          <button className="btn" onClick={onCaption} disabled={captioning}>
+          <button className="btn" onClick={openCaptions} disabled={captioning}>
             {captioning ? 'Captioning…' : 'Captions'}
           </button>
           <button className="btn" onClick={onExport} disabled={!hasClips || exporting}>
@@ -472,6 +476,9 @@ export default function App() {
           onDelete={onHistoryDelete}
           onUsePrompt={(text) => { setInject({ text, id: frame + Math.floor(performance.now()) }); setHistoryOpen(false); }}
         />
+      )}
+      {captionsOpen && (
+        <CaptionsModal onClose={() => setCaptionsOpen(false)} onGenerate={runCaptions} busy={captioning} />
       )}
       <FeedbackHost />
     </div>

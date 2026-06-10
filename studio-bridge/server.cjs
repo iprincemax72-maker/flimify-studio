@@ -360,23 +360,24 @@ function transcribe(wav) {
   });
 }
 
-// sentences → TikTok-style caption pages (~5 words/page, timing spread evenly)
-function sentencesToLines(segs) {
+// sentences → caption pages (N words/page, timing spread evenly across each)
+function sentencesToLines(segs, perPage = 5) {
+  const n = Math.max(1, Math.min(8, perPage | 0));
   const lines = [];
   for (const s of segs) {
     const words = s.text.split(/\s+/).filter(Boolean);
     if (!words.length) continue;
     const per = ((s.end - s.start) * 1000) / words.length;
     const timed = words.map((w, i) => ({ text: w, startMs: Math.round(s.start * 1000 + i * per), endMs: Math.round(s.start * 1000 + (i + 1) * per) }));
-    for (let i = 0; i < timed.length; i += 5) {
-      const pg = timed.slice(i, i + 5);
+    for (let i = 0; i < timed.length; i += n) {
+      const pg = timed.slice(i, i + n);
       lines.push({ words: pg, startMs: pg[0].startMs, endMs: pg[pg.length - 1].endMs });
     }
   }
   return lines;
 }
 
-function renderCaptions(lines, w, h, fps, style) {
+function renderCaptions(lines, w, h, fps, style, options = {}) {
   return new Promise((resolve) => {
     const id = Date.now().toString(36);
     const entryRel = path.join('src', '_studcap_' + id + '.tsx');
@@ -392,7 +393,7 @@ const Root = () => (
 );
 registerRoot(Root);`;
     fs.writeFileSync(entryAbs, entry);
-    fs.writeFileSync(propsFile, JSON.stringify({ lines, style, options: {}, fps, width: w, height: h }));
+    fs.writeFileSync(propsFile, JSON.stringify({ lines, style, options: options || {}, fps, width: w, height: h }));
     const args = ['remotion', 'render', entryRel, 'Captions', outFile, '--codec=prores', '--prores-profile=4444', '--image-format=png', '--pixel-format=yuva444p10le', '--mute', '--hardware-acceleration=if-possible', '--props=' + propsFile, '--log=error'];
     const proc = spawn(NPX, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let er = ''; proc.stderr.on('data', (c) => (er += c.toString()));
@@ -402,7 +403,7 @@ registerRoot(Root);`;
   });
 }
 
-async function autoCaption(clipId, style) {
+async function autoCaption(clipId, style, opts = {}) {
   const entry = registry[clipId];
   if (!entry || !fs.existsSync(entry.path)) return { ok: false, error: 'unknown clip' };
   const meta = await probe(entry.path);
@@ -412,9 +413,9 @@ async function autoCaption(clipId, style) {
   log('captions: transcribing…');
   const segs = await transcribe(wav);
   if (!segs.length) return { ok: false, error: 'no speech found in the clip' };
-  const lines = sentencesToLines(segs);
+  const lines = sentencesToLines(segs, opts.wordsPerLine || 5);
   log('captions: rendering ' + lines.length + ' pages…');
-  const r = await renderCaptions(lines, meta.width, meta.height, FPS, style || 'tiktok');
+  const r = await renderCaptions(lines, meta.width, meta.height, FPS, style || 'fadeup', opts.options || {});
   if (!r.ok) return r;
   const cm = await probe(r.file);
   const id = register(r.file, 'Captions');
@@ -479,7 +480,7 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     if (!body.clipId) return sendJson(res, 400, { error: 'no clip' });
     try {
-      const r = await autoCaption(body.clipId, body.style);
+      const r = await autoCaption(body.clipId, body.style, { wordsPerLine: body.wordsPerLine, options: body.options });
       return sendJson(res, r.ok ? 200 : 500, r);
     } catch (e) { return sendJson(res, 500, { error: e.message }); }
   }

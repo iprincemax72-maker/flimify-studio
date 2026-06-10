@@ -87,8 +87,21 @@ export async function planQuestions(message: string): Promise<PlanQuestion[]> {
   return questions || [];
 }
 
-export async function caption(clipId: string, style = 'tiktok'): Promise<BridgeClip> {
-  const { clip } = await post<{ clip: BridgeClip }>('/caption', { clipId, style });
+export type CaptionOptions = {
+  highlight?: string;
+  fontScale?: number;
+  position?: 'top' | 'middle' | 'bottom';
+  uppercase?: boolean;
+  stroke?: number;
+  shadow?: number;
+};
+export async function caption(
+  clipId: string,
+  style = 'fadeup',
+  wordsPerLine = 4,
+  options: CaptionOptions = {},
+): Promise<BridgeClip> {
+  const { clip } = await post<{ clip: BridgeClip }>('/caption', { clipId, style, wordsPerLine, options });
   return clip;
 }
 
