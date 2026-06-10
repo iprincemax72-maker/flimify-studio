@@ -76,11 +76,15 @@ export async function uploadVideo(file: File): Promise<BridgeClip> {
 export const isDesktop = () => !!(window.flimify && window.flimify.isDesktop);
 
 // ── account / auth (real Google sign-in via Supabase) ──
+export type PlanFeatures = { autoedit: boolean; captions: boolean; engine: boolean; maxVersions: number };
 export type AuthStatus = {
   enabled: boolean; signedIn: boolean; owner: boolean; unlimited: boolean;
   plan: string; name: string; email: string; avatar: string;
   renders_used: number; renders_limit: number; site: string; dashboard: string;
+  features: PlanFeatures;
 };
+/** Free-tier feature set — used as a safe default before the bridge responds. */
+export const FREE_FEATURES: PlanFeatures = { autoedit: false, captions: false, engine: false, maxVersions: 1 };
 export async function authStatus(): Promise<AuthStatus> {
   const r = await fetch(BRIDGE + '/auth/status', { cache: 'no-store' });
   return r.json();

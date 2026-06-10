@@ -696,22 +696,78 @@ async function freshToken() {
   })();
   return _refreshing;
 }
+// ── plan → feature gating (mirrors the Premiere extension) ──────────────────
+// Auto-Edit is Studio-only; Captions + engine switching are owner-only (early
+// access); versions/prompt are capped per tier. Owners get everything. Studio
+// runs on the user's OWN Claude, so renders stay unlimited — only these premium
+// features are gated.
+const PLAN_FEATURES = {
+  free:    { autoedit: false, maxVersions: 1 },
+  creator: { autoedit: false, maxVersions: 2 },
+  studio:  { autoedit: true,  maxVersions: 10 },
+};
+let _planCache = { plan: null, at: 0 };
+
+// Call a Supabase RPC with the user's token — used to read the real plan tier.
+async function supaRPC(fn, token) {
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON, Authorization: 'Bearer ' + token },
+      body: '{}',
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function featuresFor(plan, owner) {
+  const f = PLAN_FEATURES[plan] || PLAN_FEATURES.free;
+  return {
+    autoedit: !!(owner || f.autoedit),
+    captions: !!owner,                 // early access → owner-only (matches extension)
+    engine: !!owner,                   // engine switch (HyperFrames) owner-only
+    maxVersions: owner ? 99 : f.maxVersions,   // owner = unlimited (incl. "All")
+  };
+}
+
+// Resolve the caller's plan + feature flags. Owners are always Studio. Others
+// get their real Supabase tier (my_usage RPC), cached so a transient RPC failure
+// never downgrades a paying user to free mid-session.
+async function resolvePlan() {
+  const s = loadSession();
+  if (!s || !s.access_token) return { plan: 'free', owner: false, features: featuresFor('free', false) };
+  const email = (s.user && s.user.email) || '';
+  const owner = !!email && OWNER_EMAILS.includes(email.toLowerCase());
+  if (owner) { _planCache = { plan: 'studio', at: Date.now() }; return { plan: 'studio', owner: true, features: featuresFor('studio', true) }; }
+  const token = await freshToken();
+  let plan = 'free';
+  if (token) {
+    const usage = await supaRPC('my_usage', token);
+    const u = Array.isArray(usage) ? usage[0] : usage;
+    if (u && u.plan) { plan = u.plan; _planCache = { plan: u.plan, at: Date.now() }; }
+    else if (_planCache.plan && Date.now() - _planCache.at < 5 * 60000) { plan = _planCache.plan; }   // keep last-known good
+  }
+  return { plan, owner: false, features: featuresFor(plan, false) };
+}
+
 async function authStatus() {
   adoptNewSigninIfAny();   // pick up a freshly-chosen account before reporting
   const s = loadSession();
-  const base = { enabled: true, signedIn: false, owner: false, unlimited: true, plan: 'local', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 0, site: SITE_URL, dashboard: DASHBOARD_URL };
+  const base = { enabled: true, signedIn: false, owner: false, unlimited: true, plan: 'free', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 0, site: SITE_URL, dashboard: DASHBOARD_URL, features: featuresFor('free', false) };
   if (!s || !s.access_token) return base;
   const token = await freshToken();
   if (!token) return base;
   const email = (s.user && s.user.email) || '';
   const owner = !!email && OWNER_EMAILS.includes(email.toLowerCase());
   const meta = (s.user && (s.user.user_metadata || {})) || {};
+  const { plan, features } = await resolvePlan();
   return {
     enabled: true, signedIn: true, email,
     name: meta.full_name || meta.name || email || 'Account',
     avatar: meta.avatar_url || meta.picture || '',
-    owner, unlimited: true,                       // your own Claude → unlimited
-    plan: owner ? 'studio' : 'free',
+    owner, unlimited: true,                       // your own Claude → unlimited renders
+    plan, features,
     renders_used: 0, renders_limit: owner ? 999999 : 5,
     site: SITE_URL, dashboard: DASHBOARD_URL,
   };
@@ -852,6 +908,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, r.ok ? 200 : 500, r);
   }
   if (req.method === 'POST' && u === '/autoedit/analyze') {
+    if (!(await resolvePlan()).features.autoedit) return sendJson(res, 403, { error: 'Auto-Edit is a Studio feature — upgrade to unlock it.', planBlock: true, need: 'studio' });
     const body = await readBody(req);
     if (!body.clipId) return sendJson(res, 400, { error: 'no clip' });
     try {
@@ -860,6 +917,7 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return sendJson(res, 500, { error: e.message }); }
   }
   if (req.method === 'POST' && u === '/autoedit/run') {
+    if (!(await resolvePlan()).features.autoedit) return sendJson(res, 403, { error: 'Auto-Edit is a Studio feature — upgrade to unlock it.', planBlock: true, need: 'studio' });
     const body = await readBody(req);
     if (!body.reqId) return sendJson(res, 400, { error: 'no reqId' });
     try {
@@ -868,6 +926,7 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return sendJson(res, 500, { error: e.message }); }
   }
   if (req.method === 'POST' && u === '/caption') {
+    if (!(await resolvePlan()).features.captions) return sendJson(res, 403, { error: 'Captions are in early access — available on Studio.', planBlock: true, need: 'studio' });
     const body = await readBody(req);
     if (!body.clipId) return sendJson(res, 400, { error: 'no clip' });
     try {

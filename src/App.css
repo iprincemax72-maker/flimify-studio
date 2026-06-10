@@ -710,3 +710,10 @@ body.scrubbing-ph, body.scrubbing-ph * { cursor: col-resize !important; user-sel
   font: inherit; font-size: 10.5px; font-weight: 600; padding: 4px; border-radius: 6px; cursor: pointer;
 }
 .fp-mode button.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
+
+/* ── plan gating (free tier): dim locked controls; still clickable to upsell ── */
+.btn.plan-locked { opacity: 0.7; }
+.btn.plan-locked:hover { opacity: 0.9; }
+.btn .lock-badge { margin-left: 5px; vertical-align: -1px; opacity: 0.85; }
+.settings-segmented button.locked { opacity: 0.4; cursor: not-allowed; }
+.settings-segmented button.locked:hover { opacity: 0.55; }

@@ -10,7 +10,7 @@ import { FlimifyPanel } from './panels/FlimifyPanel';
 import type { Clip, ClipTransform, EditorState, Track, TrackType } from './editor/types';
 import { MAX_TRACKS, DEFAULT_TRANSFORM, relabelTracks } from './editor/types';
 import { EffectControls } from './panels/EffectControls';
-import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
+import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, authStatus, FREE_FEATURES, type BridgeClip, type PlanFeatures } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { CaptionsModal } from './panels/CaptionsModal';
@@ -58,6 +58,13 @@ const fmt = (frame: number, fps: number) => {
   const t = frame / fps;
   return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}:${String(Math.floor(frame % fps)).padStart(2, '0')}`;
 };
+
+// Small padlock shown on plan-locked buttons.
+const LockBadge = () => (
+  <svg className="lock-badge" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+    <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
 
 export default function App() {
   const [state, setState] = useState<EditorState>(emptyState);
@@ -150,6 +157,28 @@ export default function App() {
     const t = setInterval(check, 5000);
     return () => { alive = false; clearInterval(t); };
   }, []);
+
+  // plan / feature gating — mirrors the Premiere extension (Auto-Edit = Studio,
+  // Captions = early-access; free is locked). The bridge is the real backstop;
+  // this locks the UI and explains why. Default locked until the bridge answers.
+  const [features, setFeatures] = useState<PlanFeatures>(FREE_FEATURES);
+  const [siteUrl, setSiteUrl] = useState('https://www.flimify.com');
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try { const s = await authStatus(); if (alive && s) { setFeatures(s.features || FREE_FEATURES); if (s.site) setSiteUrl(s.site); } } catch { /* ignore */ }
+    };
+    load();
+    const t = setInterval(load, 30000);
+    const onFocus = () => load();   // refresh right after an account switch / purchase
+    window.addEventListener('focus', onFocus);
+    return () => { alive = false; clearInterval(t); window.removeEventListener('focus', onFocus); };
+  }, []);
+  // Engine switching is owner-only — pin everyone else to Remotion so a stale
+  // 'hyperframes' setting can't leak into generation.
+  useEffect(() => {
+    if (!features.engine && settings.engine !== 'remotion') patchSettings({ engine: 'remotion' });
+  }, [features.engine, settings.engine]);
 
   // sync playhead/readout to the Player
   useEffect(() => {
@@ -413,6 +442,14 @@ export default function App() {
     if (!footageClip()) { toast('Import footage first — Auto-Edit reads its speech.', true); return; }
     setAutoEditOpen(true);
   };
+  // Locked-feature prompt (free tier). Mirrors the extension's upsell.
+  const featureUpsell = async (feature: 'autoedit' | 'captions') => {
+    const copy = feature === 'autoedit'
+      ? { title: 'Auto-Edit is a Studio feature', message: 'Auto-Edit reads your footage, finds the key moments, and drops matching motion graphics across the whole clip. Upgrade to Studio to unlock it.' }
+      : { title: 'Captions are a Studio feature', message: 'Auto-captions transcribe your footage and add animated caption tracks. Upgrade to Studio to unlock them.' };
+    const ok = await confirmDialog({ ...copy, okLabel: 'See plans ↗', cancelLabel: 'Maybe later' });
+    if (ok) { try { window.open((siteUrl || 'https://www.flimify.com') + '/#pricing', '_blank', 'noopener'); } catch { /* ignore */ } }
+  };
   const applyAutoEdit = (applied: AeApplied[], clipFrom: number) => {
     for (const a of applied) {
       const clip: BridgeClip = a.clip;
@@ -520,9 +557,20 @@ export default function App() {
           <button className="btn icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
-          <button className="btn" onClick={openAutoEdit}>Auto-Edit</button>
-          <button className="btn" onClick={openCaptions} disabled={captioning}>
-            {captioning ? 'Captioning…' : 'Captions'}
+          <button
+            className={'btn' + (features.autoedit ? '' : ' plan-locked')}
+            onClick={() => (features.autoedit ? openAutoEdit() : featureUpsell('autoedit'))}
+            title={features.autoedit ? undefined : 'Studio feature'}
+          >
+            Auto-Edit{!features.autoedit && <LockBadge />}
+          </button>
+          <button
+            className={'btn' + (features.captions ? '' : ' plan-locked')}
+            onClick={() => (features.captions ? openCaptions() : featureUpsell('captions'))}
+            disabled={features.captions && captioning}
+            title={features.captions ? undefined : 'Studio feature'}
+          >
+            {captioning && features.captions ? 'Captioning…' : 'Captions'}{!features.captions && <LockBadge />}
           </button>
           <button className="btn" onClick={onExport} disabled={!hasClips || exporting}>
             {exporting ? 'Exporting…' : 'Export'}
@@ -624,6 +672,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onClearHistory={() => { saveHistory([]); setHistory([]); }}
           onReset={() => setSettings({ ...SETTINGS_DEFAULTS })}
+          features={features}
         />
       )}
       {historyOpen && (

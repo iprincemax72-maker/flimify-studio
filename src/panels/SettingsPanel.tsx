@@ -4,16 +4,25 @@
 // over the editor.
 import { useState } from 'react';
 import type { Settings } from '../settings';
+import type { PlanFeatures } from '../api';
 import { ACCENT_ORDER, ACCENT_PALETTES, THEME_ORDER, SETTINGS_DEFAULTS } from '../settings';
 import { confirmDialog, toast } from '../ui/feedback';
 
-const Seg = <T extends string>({ value, opts, onChange }: {
+const Seg = <T extends string>({ value, opts, onChange, locked, onLocked }: {
   value: T; opts: { val: T; label: string }[]; onChange: (v: T) => void;
+  locked?: (v: T) => boolean; onLocked?: () => void;
 }) => (
   <div className="settings-segmented">
-    {opts.map((o) => (
-      <button key={o.val} className={value === o.val ? 'active' : ''} onClick={() => onChange(o.val)}>{o.label}</button>
-    ))}
+    {opts.map((o) => {
+      const isLocked = locked ? locked(o.val) : false;
+      return (
+        <button
+          key={o.val}
+          className={(value === o.val ? 'active' : '') + (isLocked ? ' locked' : '')}
+          onClick={() => (isLocked ? onLocked?.() : onChange(o.val))}
+        >{o.label}</button>
+      );
+    })}
   </div>
 );
 
@@ -40,7 +49,10 @@ export const SettingsPanel: React.FC<{
   onClose: () => void;
   onClearHistory?: () => void;
   onReset?: () => void;
-}> = ({ settings, onChange, onClose, onClearHistory, onReset }) => {
+  features?: PlanFeatures;
+}> = ({ settings, onChange, onClose, onClearHistory, onReset, features }) => {
+  const verMax = features ? features.maxVersions : 99;
+  const verNum = (v: string) => (v === 'all' ? 99 : Number(v) || 1);
   const [cleared, setCleared] = useState(false);
   const [diag, setDiag] = useState('Copy diagnostics');
 
@@ -103,8 +115,14 @@ export const SettingsPanel: React.FC<{
           <Row name="Default expand level" hint="The sparkles button default — Low / Mid / High">
             <Seg value={settings.expand} opts={[{ val: 'light', label: 'Low' }, { val: 'medium', label: 'Mid' }, { val: 'heavy', label: 'High' }]} onChange={(v) => onChange({ expand: v })} />
           </Row>
-          <Row name="Versions at once" hint="When generating multiple versions, how many render in parallel">
-            <Seg value={settings.versions} opts={[{ val: '1', label: '1' }, { val: '2', label: '2' }, { val: '3', label: '3' }, { val: '5', label: '5' }, { val: 'all', label: 'All' }]} onChange={(v) => onChange({ versions: v })} />
+          <Row name="Versions at once" hint={'When generating multiple versions, how many render in parallel' + (verMax < 99 ? ` · your plan allows ${verMax}` : '')}>
+            <Seg
+              value={settings.versions}
+              opts={[{ val: '1', label: '1' }, { val: '2', label: '2' }, { val: '3', label: '3' }, { val: '5', label: '5' }, { val: 'all', label: 'All' }]}
+              onChange={(v) => onChange({ versions: v })}
+              locked={(v) => verNum(v) > verMax}
+              onLocked={() => toast('More versions per prompt is a paid feature — upgrade to unlock.', true)}
+            />
           </Row>
           <Row name="Confirm before adding to timeline" hint="Ask before a generated graphic drops onto the timeline">
             <Toggle checked={settings.confirmImport} onChange={(v) => onChange({ confirmImport: v })} />
@@ -113,9 +131,11 @@ export const SettingsPanel: React.FC<{
 
         <div className="settings-section">
           <div className="settings-section-title">Defaults for new graphics</div>
-          <Row name="Engine" hint="Remotion (React) or HyperFrames (HTML/GSAP)">
-            <Seg value={settings.engine} opts={[{ val: 'remotion', label: 'Remotion' }, { val: 'hyperframes', label: 'HyperFrames' }]} onChange={(v) => onChange({ engine: v })} />
-          </Row>
+          {(!features || features.engine) && (
+            <Row name="Engine" hint="Remotion (React) or HyperFrames (HTML/GSAP)">
+              <Seg value={settings.engine} opts={[{ val: 'remotion', label: 'Remotion' }, { val: 'hyperframes', label: 'HyperFrames' }]} onChange={(v) => onChange({ engine: v })} />
+            </Row>
+          )}
           <Row name="Default aspect ratio" hint="Used when generating a graphic; override anytime">
             <Seg value={settings.aspect} opts={[{ val: 'auto', label: 'Auto' }, { val: '9:16', label: '9:16' }, { val: '16:9', label: '16:9' }, { val: '1:1', label: '1:1' }]} onChange={(v) => onChange({ aspect: v })} />
           </Row>
