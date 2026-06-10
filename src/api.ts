@@ -4,7 +4,22 @@
 // niceties like a native file-open dialog.
 import type { Clip, EditorState } from './editor/types';
 
-export const BRIDGE = 'http://localhost:3939';
+// Where the backend (studio-bridge) lives:
+//  • Desktop app (Electron, file://) → the locally-spawned bridge on :3939.
+//  • Browser dev (vite on :5191)      → the local bridge on :3939.
+//  • Web mode (the bridge serves the app at <host>/app — local :3939 OR a hosted
+//    deploy like https://app.flimify.com) → SAME ORIGIN, so the exact same build
+//    works as a public website behind any host.
+// Override with window.__FLIMIFY_BRIDGE__ or ?bridge= if you ever split them.
+export const BRIDGE = (() => {
+  if (typeof window !== 'undefined' && (window as unknown as { __FLIMIFY_BRIDGE__?: string }).__FLIMIFY_BRIDGE__) {
+    return (window as unknown as { __FLIMIFY_BRIDGE__: string }).__FLIMIFY_BRIDGE__.replace(/\/+$/, '');
+  }
+  if (typeof location === 'undefined') return 'http://localhost:3939';
+  if (location.protocol === 'file:') return 'http://localhost:3939';   // desktop app
+  if (location.port === '5191') return 'http://localhost:3939';        // vite dev → local bridge
+  return location.origin;                                              // web mode (local :3939/app or hosted)
+})();
 
 export type BridgeClip = {
   id: string;
