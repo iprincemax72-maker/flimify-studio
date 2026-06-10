@@ -22,6 +22,10 @@
       "electron/**/*",
       "studio-bridge/**/*"
     ],
+    "asarUnpack": [
+      "studio-bridge/**",
+      "electron/**"
+    ],
     "extraResources": [
       { "from": "render", "to": "render" }
     ],

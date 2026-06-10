@@ -21,7 +21,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 .studio {
   height: 100vh;
   display: grid;
-  grid-template-rows: 44px 1fr 230px;
+  grid-template-rows: 44px 1fr 340px;
   position: relative;
 }
 
@@ -64,7 +64,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 /* work area */
 .work {
   display: grid;
-  grid-template-columns: 270px 1fr 380px;
+  grid-template-columns: 320px 1fr 460px;
   min-height: 0;
 }
 .panel { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }

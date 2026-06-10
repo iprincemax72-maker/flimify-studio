@@ -16,8 +16,13 @@ let mainWin = null;
 // Launch the studio-bridge using THIS Electron binary in pure-Node mode
 // (ELECTRON_RUN_AS_NODE) so no separate node install is required when packaged.
 function startBridge() {
-  const serverPath = path.join(__dirname, '..', 'studio-bridge', 'server.cjs');
+  // In the packaged app the code lives inside app.asar; a Node script can't be
+  // spawned from an asar path, so resolve to the unpacked copy (asarUnpack).
+  const serverPath = path
+    .join(__dirname, '..', 'studio-bridge', 'server.cjs')
+    .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
   if (!fs.existsSync(serverPath)) { console.error('[main] studio-bridge not found at', serverPath); return; }
+  console.log('[main] starting bridge:', serverPath);
   bridgeProc = spawn(process.execPath, [serverPath], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
