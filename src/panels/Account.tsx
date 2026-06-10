@@ -1,24 +1,23 @@
-// Account widget — ported from the extension: a header button + a popover with
-// sign-in (Google), the signed-in account (avatar, name, plan, usage), and
-// sign-out. Studio runs on the user's own Claude, so generation is always
-// unlimited and never requires an account — sign-in is for syncing a
-// flimify.com account (real Google auth completes on the website).
+// Account widget — REAL Google sign-in via the same Supabase project the
+// Premiere extension uses, so the real name + Google profile picture show up.
+// If you're already signed into the extension, Studio picks up that session on
+// load (no re-login). "Sign in with Google" opens the bridge's /connect OAuth
+// page in the browser, then polls until signed in.
 import { useEffect, useRef, useState } from 'react';
-import { authStatus, authSignIn, authSignOut, authConnectUrl, type AuthStatus } from '../api';
+import { authStatus, authSignOut, BRIDGE, type AuthStatus } from '../api';
 import { toast } from '../ui/feedback';
 
-const openExternal = (url: string) => {
-  // desktop opens via the OS; browser opens a tab
-  try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ }
-};
+const openUrl = (url: string) => { try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ } };
 
 export const Account: React.FC = () => {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<number | undefined>(undefined);
 
   const refresh = async () => { try { setStatus(await authStatus()); } catch { setStatus(null); } };
-  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => { clearInterval(t); clearInterval(pollRef.current); }; }, []);
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -26,11 +25,21 @@ export const Account: React.FC = () => {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  const signIn = async () => {
-    const url = await authConnectUrl();
-    openExternal(url); // real Google sign-in lives on flimify.com
-    try { setStatus(await authSignIn('You', '')); toast('Signed in (local). Manage your account on flimify.com.'); }
-    catch { /* ignore */ }
+  const dashboard = () => openUrl(status?.dashboard || 'https://www.flimify.com/account.html');
+
+  const signIn = () => {
+    openUrl(BRIDGE + '/connect?reauth=1');  // Supabase Google OAuth in the browser
+    setPending(true);
+    let tries = 0;
+    clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(async () => {
+      tries++;
+      try {
+        const s = await authStatus();
+        if (s.signedIn) { setStatus(s); setPending(false); clearInterval(pollRef.current); toast('Signed in as ' + (s.name || s.email) + '.'); }
+      } catch { /* ignore */ }
+      if (tries > 150) { setPending(false); clearInterval(pollRef.current); }
+    }, 2000);
   };
   const signOut = async () => { try { setStatus(await authSignOut()); toast('Signed out.'); } catch { /* ignore */ } setOpen(false); };
 
@@ -59,24 +68,24 @@ export const Account: React.FC = () => {
                 </div>
               </div>
               <div className="acct-plan">
-                <span className="acct-plan-name">{status?.owner ? 'Owner' : (status?.plan || 'Local')}</span>
+                <span className="acct-plan-name">{status?.owner ? 'Owner' : (status?.plan || 'Free')}</span>
                 <span className="acct-usage">{status?.unlimited ? '∞ renders' : `${status?.renders_used}/${status?.renders_limit}`}</span>
               </div>
               <div className="acct-note">Unlimited — running on your own Claude.</div>
               <div className="acct-actions">
-                <button onClick={() => openExternal((status?.site || 'https://www.flimify.com') + '/account')}>Open account ↗</button>
+                <button onClick={dashboard}>Dashboard ↗</button>
                 <button className="danger" onClick={signOut}>Sign out</button>
               </div>
             </>
           ) : (
             <>
               <div className="acct-title">Sign in</div>
-              <div className="acct-sub">Generation is unlimited on your own Claude — no account needed. Sign in to sync a flimify.com account.</div>
-              <button className="acct-google" onClick={signIn}>
-                <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#4285F4" d="M21.6 12.2c0-.6 0-1.2-.2-1.8H12v3.5h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.2z" /><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.7-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z" /><path fill="#FBBC05" d="M6.4 14a6 6 0 0 1 0-3.8V7.6H3.1a10 10 0 0 0 0 8.9z" /><path fill="#EA4335" d="M12 6.1c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.6L6.4 10c.8-2.4 3-4 5.6-4z" /></svg>
-                Sign in with Google
+              <div className="acct-sub">Continue with Google. Studio runs unlimited on your own Claude — no account needed.</div>
+              <button className="acct-google" onClick={signIn} disabled={pending}>
+                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.23 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" /><path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z" /></svg>
+                {pending ? 'Waiting for browser…' : 'Continue with Google'}
               </button>
-              <button className="acct-link" onClick={() => openExternal((status?.site || 'https://www.flimify.com'))}>Open flimify.com ↗</button>
+              <button className="acct-link" onClick={dashboard}>Open Dashboard ↗</button>
             </>
           )}
         </div>

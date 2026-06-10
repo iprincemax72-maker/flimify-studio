@@ -588,29 +588,89 @@ async function autoEditRun({ reqId, density, tone, answers, engine }, onStatus) 
   return { ok: true, applied, planned: plan.length };
 }
 
-// ── account / auth ──────────────────────────────────────────────────────────
-// Studio runs on the user's OWN Claude, so generation never needs an account
-// (local = unlimited). The account widget is for syncing a flimify.com account;
-// sign-in opens the browser. Session is a local file.
-const SESSION_FILE = path.join(STUDIO_DIR, 'session.json');
+// ── account / auth (REAL Google sign-in via Supabase) ───────────────────────
+// Reuses the same Supabase project as the Premiere extension, so the real Google
+// account (name + avatar) shows up. If you're already signed into the extension,
+// Studio picks up that session automatically — no re-login.
 const SITE_URL = process.env.FLIMIFY_SITE_URL || 'https://www.flimify.com';
-function readSession() { try { return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')); } catch { return null; } }
-function authStatus() {
-  const s = readSession();
+const DASHBOARD_URL = SITE_URL + '/account.html';   // the Dashboard page (account mgmt)
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://hwsyaqmkwitxprtnrzkj.supabase.co').replace(/\/+$/, '');
+const SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || 'sb_publishable_k7tsIqZia0WXf4eGQwcY2w_jFjAkDEK';
+const OWNER_EMAILS = (process.env.OWNER_EMAILS || 'iprincemax72@gmail.com,anshdhakad9@gmail.com')
+  .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+const SESSION_FILE = path.join(STUDIO_DIR, 'session.json');
+// also read the Premiere extension's session — sign in there → signed in here too
+const SHARED_SESSION_FILES = [path.join(HOME, 'PremiereClaude', 'session.json'), path.join(HOME, '.premiere-claude', 'session.json')];
+
+let _session = null;
+function loadSession() {
+  if (_session && _session.access_token) return _session;
+  for (const f of [SESSION_FILE, ...SHARED_SESSION_FILES]) {
+    try { if (fs.existsSync(f)) { const s = JSON.parse(fs.readFileSync(f, 'utf8')); if (s && s.access_token) { _session = s; return s; } } } catch {}
+  }
+  return null;
+}
+function saveSession(s) { _session = s; try { fs.writeFileSync(SESSION_FILE, JSON.stringify(s), { mode: 0o600 }); } catch {} }
+function clearSession() { _session = null; try { fs.unlinkSync(SESSION_FILE); } catch {} }
+
+let _refreshing = null;
+async function freshToken() {
+  const s = loadSession();
+  if (!s || !s.access_token) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (s.expires_at && (s.expires_at - now) > 60) return s.access_token;
+  if (!s.refresh_token) return s.access_token;
+  if (_refreshing) return _refreshing;
+  _refreshing = (async () => {
+    try {
+      const r = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON },
+        body: JSON.stringify({ refresh_token: s.refresh_token }),
+      });
+      if (!r.ok) { if (r.status === 400 || r.status === 401) { clearSession(); return null; } return (loadSession() || {}).access_token || null; }
+      const j = await r.json();
+      saveSession({ access_token: j.access_token, refresh_token: j.refresh_token || s.refresh_token, expires_at: j.expires_at || (now + (j.expires_in || 3600)), user: j.user || s.user });
+      return j.access_token;
+    } catch { return (loadSession() || {}).access_token || null; }
+    finally { _refreshing = null; }
+  })();
+  return _refreshing;
+}
+async function authStatus() {
+  const s = loadSession();
+  const base = { enabled: true, signedIn: false, owner: false, unlimited: true, plan: 'local', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 0, site: SITE_URL, dashboard: DASHBOARD_URL };
+  if (!s || !s.access_token) return base;
+  const token = await freshToken();
+  if (!token) return base;
+  const email = (s.user && s.user.email) || '';
+  const owner = !!email && OWNER_EMAILS.includes(email.toLowerCase());
+  const meta = (s.user && (s.user.user_metadata || {})) || {};
   return {
-    enabled: true,
-    signedIn: !!s,
-    owner: s ? !!s.owner : false,
-    unlimited: true,            // always — it's your own Claude
-    plan: s ? (s.plan || 'local') : 'local',
-    name: s ? s.name : '',
-    email: s ? s.email : '',
-    avatar: s ? s.avatar : '',
-    renders_used: s ? (s.renders_used || 0) : 0,
-    renders_limit: s ? (s.renders_limit || 0) : 0,
-    site: SITE_URL,
+    enabled: true, signedIn: true, email,
+    name: meta.full_name || meta.name || email || 'Account',
+    avatar: meta.avatar_url || meta.picture || '',
+    owner, unlimited: true,                       // your own Claude → unlimited
+    plan: owner ? 'studio' : 'free',
+    renders_used: 0, renders_limit: owner ? 999999 : 5,
+    site: SITE_URL, dashboard: DASHBOARD_URL,
   };
 }
+
+// The sign-in page Studio opens in the browser: Supabase Google OAuth, then it
+// hands the session back to this bridge (POST /auth/session).
+const CONNECT_HTML = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Flimify Studio</title>'
+  + '<style>body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:#0d0d10;color:#f2efe6;display:grid;place-items:center;height:100vh}.card{width:min(420px,90vw);background:#15151a;border:1px solid rgba(255,255,255,.1);border-radius:18px;padding:28px;text-align:center}.glyph{width:48px;height:48px;border-radius:13px;margin:0 auto 16px;display:grid;place-items:center;background:linear-gradient(135deg,#e89a6c,#d97757);color:#1a1205;font-weight:800;font-size:24px}.big{font-size:20px;font-weight:700;margin:0 0 6px}.sub{color:#9b9588;font-size:13px;line-height:1.5;margin:0 0 18px}.gbtn{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#1a1a1a;border:0;border-radius:11px;padding:11px 18px;font:600 14px system-ui;cursor:pointer}.gbtn svg{width:18px;height:18px}.e{color:#e98c7a;font-size:13px;margin-top:12px}</style></head>'
+  + '<body><div class="card"><div class="glyph">F</div><div id="view"><p class="sub">Loading…</p></div></div>'
+  + '<script type="module">'
+  + 'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";'
+  + 'var SB_URL="' + SUPABASE_URL + '",SB_ANON="' + SUPABASE_ANON + '";'
+  + 'var supabase=createClient(SB_URL,SB_ANON,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:"pkce"}});'
+  + 'var view=document.getElementById("view");function show(h){view.innerHTML=h;}'
+  + 'var G=\'<svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.23 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z"/></svg>\';'
+  + 'async function push(s){try{var r=await fetch("/auth/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({access_token:s.access_token,refresh_token:s.refresh_token,expires_at:s.expires_at,user:s.user})});return r.ok;}catch(e){return false;}}'
+  + 'function signin(){show(\'<p class="big">Sign in to Flimify Studio</p><p class="sub">Continue with Google. Runs unlimited on your own Claude.</p><button id="g" class="gbtn">\'+G+\' Continue with Google</button><div id="er" class="e" style="display:none"></div>\');var er=document.getElementById("er");document.getElementById("g").onclick=async function(){var r=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:location.origin+"/connect",queryParams:{prompt:"select_account"}}});if(r.error){er.textContent=r.error.message;er.style.display="block";}};}'
+  + '(async function(){var Q=new URLSearchParams(location.search);if(Q.get("reauth")==="1"&&!Q.get("code")){try{await supabase.auth.signOut({scope:"local"});}catch(e){}signin();return;}var res=await supabase.auth.getSession();var session=res.data.session;if(session){show(\'<p class="big">Connecting…</p>\');var ok=await push(session);show(ok?\'<p class="big">&#10003; Signed in</p><p class="sub">Signed in as <b>\'+(session.user.email||"")+\'</b>. You can close this tab and go back to Flimify Studio.</p>\':\'<p class="big">Almost there</p><p class="sub">Couldn&#39;t reach Studio. Make sure Flimify Studio is open, then reload.</p>\');return;}signin();})();'
+  + '<\/script></body></html>';
 
 // ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
@@ -659,20 +719,23 @@ const server = http.createServer(async (req, res) => {
     log('import', path.basename(src), `${meta.width}x${meta.height} ${meta.durationSec.toFixed(1)}s`);
     return sendJson(res, 200, { ok: true, clip: clipFromProbe(id, path.basename(src), meta) });
   }
-  if (req.method === 'GET' && u === '/auth/status') return sendJson(res, 200, authStatus());
-  if (req.method === 'POST' && u === '/auth/signin') {
-    const b = await readBody(req);
-    const sess = { name: b.name || 'You', email: b.email || '', avatar: b.avatar || '', plan: 'local', owner: true, unlimited: true, t: Date.now() };
-    try { fs.writeFileSync(SESSION_FILE, JSON.stringify(sess)); } catch {}
-    log('signed in', sess.email || sess.name);
-    return sendJson(res, 200, { ok: true, ...authStatus() });
+  if (req.method === 'GET' && u === '/auth/status') { const st = await authStatus(); return sendJson(res, 200, st); }
+  if (req.method === 'POST' && u === '/auth/session') {
+    const p = await readBody(req);
+    if (!p.access_token) return sendJson(res, 400, { error: 'no token' });
+    saveSession({ access_token: p.access_token, refresh_token: p.refresh_token || '', expires_at: p.expires_at || 0, user: p.user || null });
+    log('signed in: ' + ((p.user && p.user.email) || '?'));
+    return sendJson(res, 200, { ok: true });
   }
   if (req.method === 'POST' && u === '/auth/signout') {
-    try { fs.unlinkSync(SESSION_FILE); } catch {}
+    clearSession();
     log('signed out');
-    return sendJson(res, 200, { ok: true, ...authStatus() });
+    return sendJson(res, 200, { ok: true });
   }
-  if (req.method === 'GET' && u === '/connect') return sendJson(res, 200, { url: SITE_URL + '/login' });
+  if (req.method === 'GET' && (u === '/connect' || u.startsWith('/connect?'))) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+    return res.end(CONNECT_HTML);
+  }
   if (req.method === 'POST' && u === '/cancel') {
     const { reqId } = await readBody(req);
     const killed = cancelGen(reqId);
