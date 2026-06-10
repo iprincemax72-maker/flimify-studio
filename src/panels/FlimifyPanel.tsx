@@ -29,6 +29,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
   const [activeId, setActiveId] = useState<string>(() => tabs[0].id);
   const [, force] = useState(0); // re-render tick for the progress estimate
   const [outOpen, setOutOpen] = useState(false);
+  const [engOpen, setEngOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -335,11 +336,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       </div>
 
       {active.type === 'animation' && (
-        <>
-          <div className="fp-engine">
-            <button className={active.engine === 'remotion' ? 'on' : ''} onClick={() => patch(active.id, (t) => ({ ...t, engine: 'remotion' }))}>Remotion</button>
-            <button className={active.engine === 'hyperframes' ? 'on' : ''} onClick={() => patch(active.id, (t) => ({ ...t, engine: 'hyperframes' }))}>HyperFrames</button>
-          </div>
+        <div className="fp-modebar">
           <div className="fp-mode">
             {(['fast', 'default', 'slow'] as const).map((m) => (
               <button key={m} className={active.renderMode === m ? 'on' : ''} onClick={() => patch(active.id, (t) => ({ ...t, renderMode: m }))} title={m === 'fast' ? 'Quick template-based (~1 min)' : m === 'slow' ? 'Best quality — explores + polishes (~3-5 min)' : 'A real custom-built animation (~2 min)'}>
@@ -347,7 +344,18 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
               </button>
             ))}
           </div>
-        </>
+          <div className={'fp-eng' + (engOpen ? ' open' : '')}>
+            <button className="fp-eng-btn" onClick={() => setEngOpen((o) => !o)} title="Render engine">
+              {active.engine === 'remotion' ? 'Remotion' : 'HyperFrames'} <span className="fp-eng-caret">⌄</span>
+            </button>
+            {engOpen && (
+              <div className="fp-eng-menu">
+                <button className={active.engine === 'remotion' ? 'on' : ''} onClick={() => { patch(active.id, (t) => ({ ...t, engine: 'remotion' })); setEngOpen(false); }}>Remotion<span>React motion graphics</span></button>
+                <button className={active.engine === 'hyperframes' ? 'on' : ''} onClick={() => { patch(active.id, (t) => ({ ...t, engine: 'hyperframes' })); setEngOpen(false); }}>HyperFrames<span>HTML/CSS/GSAP blocks</span></button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {showHero ? (
@@ -499,7 +507,8 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
           </div>
           <button className={'fp-pill' + (active.planMode ? ' on' : '')} onClick={() => patch(active.id, (t) => ({ ...t, planMode: !t.planMode }))} title="Ask a few questions before building">Ask Questions</button>
           <button className="fp-pill" onClick={attachRef} title="Attach a reference image">+ Reference</button>
-          <div className="fp-expand" title="Flesh out the prompt">
+          <div className="fp-expand" title="Flesh out the prompt — adds detail to your prompt">
+            <span className="fp-expand-label">EXTEND</span>
             {active.expanding ? <span className="fp-spin" /> : (['light', 'medium', 'heavy'] as const).map((lv) => (
               <button key={lv} onClick={() => expand(lv)} disabled={!active.draft.trim()} title={lv === 'light' ? 'Low' : lv === 'medium' ? 'Mid' : 'High'}>{lv === 'light' ? 'Low' : lv === 'medium' ? 'Mid' : 'High'}</button>
             ))}

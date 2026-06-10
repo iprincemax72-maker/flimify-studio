@@ -74,6 +74,27 @@ export async function uploadVideo(file: File): Promise<BridgeClip> {
 /** True when running inside the Electron desktop shell (vs a plain browser). */
 export const isDesktop = () => !!(window.flimify && window.flimify.isDesktop);
 
+// ── account / auth ──
+export type AuthStatus = {
+  enabled: boolean; signedIn: boolean; owner: boolean; unlimited: boolean;
+  plan: string; name: string; email: string; avatar: string;
+  renders_used: number; renders_limit: number; site: string;
+};
+export async function authStatus(): Promise<AuthStatus> {
+  const r = await fetch(BRIDGE + '/auth/status', { cache: 'no-store' });
+  return r.json();
+}
+export async function authSignIn(name?: string, email?: string): Promise<AuthStatus> {
+  return post<AuthStatus>('/auth/signin', { name, email });
+}
+export async function authSignOut(): Promise<AuthStatus> {
+  return post<AuthStatus>('/auth/signout', {});
+}
+export async function authConnectUrl(): Promise<string> {
+  try { const r = await fetch(BRIDGE + '/connect'); const j = await r.json(); return j.url || 'https://www.flimify.com/login'; }
+  catch { return 'https://www.flimify.com/login'; }
+}
+
 export async function generate(
   prompt: string,
   engine: 'remotion' | 'hyperframes',

@@ -588,6 +588,30 @@ async function autoEditRun({ reqId, density, tone, answers, engine }, onStatus) 
   return { ok: true, applied, planned: plan.length };
 }
 
+// ── account / auth ──────────────────────────────────────────────────────────
+// Studio runs on the user's OWN Claude, so generation never needs an account
+// (local = unlimited). The account widget is for syncing a flimify.com account;
+// sign-in opens the browser. Session is a local file.
+const SESSION_FILE = path.join(STUDIO_DIR, 'session.json');
+const SITE_URL = process.env.FLIMIFY_SITE_URL || 'https://www.flimify.com';
+function readSession() { try { return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')); } catch { return null; } }
+function authStatus() {
+  const s = readSession();
+  return {
+    enabled: true,
+    signedIn: !!s,
+    owner: s ? !!s.owner : false,
+    unlimited: true,            // always — it's your own Claude
+    plan: s ? (s.plan || 'local') : 'local',
+    name: s ? s.name : '',
+    email: s ? s.email : '',
+    avatar: s ? s.avatar : '',
+    renders_used: s ? (s.renders_used || 0) : 0,
+    renders_limit: s ? (s.renders_limit || 0) : 0,
+    site: SITE_URL,
+  };
+}
+
 // ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const u = req.url || '/';
@@ -635,6 +659,20 @@ const server = http.createServer(async (req, res) => {
     log('import', path.basename(src), `${meta.width}x${meta.height} ${meta.durationSec.toFixed(1)}s`);
     return sendJson(res, 200, { ok: true, clip: clipFromProbe(id, path.basename(src), meta) });
   }
+  if (req.method === 'GET' && u === '/auth/status') return sendJson(res, 200, authStatus());
+  if (req.method === 'POST' && u === '/auth/signin') {
+    const b = await readBody(req);
+    const sess = { name: b.name || 'You', email: b.email || '', avatar: b.avatar || '', plan: 'local', owner: true, unlimited: true, t: Date.now() };
+    try { fs.writeFileSync(SESSION_FILE, JSON.stringify(sess)); } catch {}
+    log('signed in', sess.email || sess.name);
+    return sendJson(res, 200, { ok: true, ...authStatus() });
+  }
+  if (req.method === 'POST' && u === '/auth/signout') {
+    try { fs.unlinkSync(SESSION_FILE); } catch {}
+    log('signed out');
+    return sendJson(res, 200, { ok: true, ...authStatus() });
+  }
+  if (req.method === 'GET' && u === '/connect') return sendJson(res, 200, { url: SITE_URL + '/login' });
   if (req.method === 'POST' && u === '/cancel') {
     const { reqId } = await readBody(req);
     const killed = cancelGen(reqId);
