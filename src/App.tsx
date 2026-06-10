@@ -12,7 +12,7 @@ import { MAX_TRACKS, relabelTracks } from './editor/types';
 import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineClip, type BridgeClip } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
-import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, type Settings } from './settings';
+import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, SETTINGS_DEFAULTS, type Settings } from './settings';
 import { configureParticles } from './particles';
 import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
 import { FeedbackHost, toast, confirmDialog, openLightbox } from './ui/feedback';
@@ -454,7 +454,13 @@ export default function App() {
       />
 
       {settingsOpen && (
-        <SettingsPanel settings={settings} onChange={patchSettings} onClose={() => setSettingsOpen(false)} />
+        <SettingsPanel
+          settings={settings}
+          onChange={patchSettings}
+          onClose={() => setSettingsOpen(false)}
+          onClearHistory={() => { saveHistory([]); setHistory([]); }}
+          onReset={() => setSettings({ ...SETTINGS_DEFAULTS })}
+        />
       )}
       {historyOpen && (
         <HistoryPanel history={history} onClose={() => setHistoryOpen(false)} onAdd={onHistoryAdd} onDelete={onHistoryDelete} />
