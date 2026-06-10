@@ -4,7 +4,7 @@
 // load (no re-login). "Sign in with Google" opens the bridge's /connect OAuth
 // page in the browser, then polls until signed in.
 import { useEffect, useRef, useState } from 'react';
-import { authStatus, authSignOut, authReconnect, BRIDGE, type AuthStatus } from '../api';
+import { authStatus, authSignOut, authReconnect, authBeginSignin, type AuthStatus } from '../api';
 import { toast } from '../ui/feedback';
 
 const openUrl = (url: string) => { try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ } };
@@ -27,21 +27,25 @@ export const Account: React.FC = () => {
 
   const dashboard = () => openUrl(status?.dashboard || 'https://www.flimify.com/account.html');
 
-  // "Continue with Google" — opens the real OAuth account picker in the browser
-  // (reauth=1 forces Google's "choose an account" screen), then polls.
-  const signIn = () => {
-    openUrl(BRIDGE + '/connect?reauth=1');
+  // "Continue with Google" — copies the extension's working redirect: routes
+  // through the extension's allow-listed /connect (account picker) when its
+  // bridge is up, shares the session, and signs in immediately if one exists.
+  const signIn = async () => {
     setPending(true);
+    try {
+      const { url, status } = await authBeginSignin();
+      if (status?.signedIn) { setStatus(status); toast('Signed in as ' + (status.name || status.email) + '.'); }
+      openUrl(url);  // opens Google's "choose an account" in the browser
+    } catch { /* ignore */ }
+    // keep polling so an account switch in the browser reflects here
     let tries = 0;
     clearInterval(pollRef.current);
     pollRef.current = window.setInterval(async () => {
       tries++;
-      try {
-        const s = await authStatus();
-        if (s.signedIn) { setStatus(s); setPending(false); clearInterval(pollRef.current); toast('Signed in as ' + (s.name || s.email) + '.'); }
-      } catch { /* ignore */ }
-      if (tries > 150) { setPending(false); clearInterval(pollRef.current); }
+      try { const s = await authStatus(); if (s.signedIn) setStatus(s); } catch { /* ignore */ }
+      if (tries > 90) clearInterval(pollRef.current);
     }, 2000);
+    setTimeout(() => setPending(false), 1400);
   };
   // "Resume" — re-use the existing/extension session without the picker.
   const resume = async () => {

@@ -94,6 +94,12 @@ export async function authReconnect(): Promise<AuthStatus> {
   const r = await fetch(BRIDGE + '/auth/reconnect', { method: 'POST' });
   return r.json();
 }
+/** Begin Google sign-in — returns the redirect URL (the extension's allow-listed
+ *  /connect when its bridge is up) + the current status (shared session). */
+export async function authBeginSignin(): Promise<{ url: string; viaExt: boolean; status: AuthStatus }> {
+  const r = await fetch(BRIDGE + '/auth/begin-signin', { method: 'POST' });
+  return r.json();
+}
 
 export async function generate(
   prompt: string,

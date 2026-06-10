@@ -629,6 +629,18 @@ function clearSession() {
   try { fs.unlinkSync(SESSION_FILE); } catch {}
   try { fs.writeFileSync(SIGNED_OUT_MARKER, '1'); } catch {}   // sticks across the shared-session fallback
 }
+// Is the Premiere extension's bridge up? Its /connect is the redirect Supabase
+// already allow-lists, so we route Studio's Google sign-in through it.
+const EXT_BRIDGE = process.env.FLIMIFY_EXT_BRIDGE || 'http://localhost:3737';
+async function extBridgeUp() {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1200);
+    const r = await fetch(EXT_BRIDGE + '/ping', { signal: ctrl.signal });
+    clearTimeout(t);
+    return r.ok;
+  } catch { return false; }
+}
 
 let _refreshing = null;
 async function freshToken() {
@@ -756,6 +768,18 @@ const server = http.createServer(async (req, res) => {
     const st = await authStatus();
     if (st.signedIn) log('reconnected: ' + st.email);
     return sendJson(res, 200, st);
+  }
+  // Begin Google sign-in: clear the sign-out, pick the redirect that actually
+  // works — the extension's allow-listed /connect if its bridge is up, else
+  // Studio's own. Returns the URL + the (possibly already-signed-in) status.
+  if (req.method === 'POST' && u === '/auth/begin-signin') {
+    try { fs.unlinkSync(SIGNED_OUT_MARKER); } catch {}
+    _session = null;
+    const viaExt = await extBridgeUp();
+    const url = viaExt ? (EXT_BRIDGE + '/connect?reauth=1') : ('http://localhost:' + PORT + '/connect?reauth=1');
+    const status = await authStatus();
+    log('begin-signin via ' + (viaExt ? 'extension(3737)' : 'studio(3939)'));
+    return sendJson(res, 200, { url, viaExt, status });
   }
   if (req.method === 'GET' && (u === '/connect' || u.startsWith('/connect?'))) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
