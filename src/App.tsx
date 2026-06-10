@@ -13,7 +13,8 @@ import { health, importPath, exportTimeline, caption, deleteMedia, toTimelineCli
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { CaptionsModal } from './panels/CaptionsModal';
-import type { CaptionOptions } from './api';
+import { AutoEditModal } from './panels/AutoEditModal';
+import type { CaptionOptions, AeApplied } from './api';
 import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, SETTINGS_DEFAULTS, type Settings } from './settings';
 import { configureParticles } from './particles';
 import { loadHistory, saveHistory, entryFromClip, type HistoryEntry, type HistoryKind } from './history';
@@ -291,6 +292,24 @@ export default function App() {
     if (!clip) { toast('Import footage first to caption it.', true); return; }
     setCaptionsOpen(true);
   };
+  // ── Auto-Edit: read footage speech → plan + render graphics → place at their
+  // timeline moments on overlay tracks ──
+  const [autoEditOpen, setAutoEditOpen] = useState(false);
+  const footageClip = () => state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
+  const openAutoEdit = () => {
+    if (!footageClip()) { toast('Import footage first — Auto-Edit reads its speech.', true); return; }
+    setAutoEditOpen(true);
+  };
+  const applyAutoEdit = (applied: AeApplied[], clipFrom: number) => {
+    for (const a of applied) {
+      const clip: BridgeClip = a.clip;
+      setBin((x) => [clip, ...x]);
+      addHistory(clip, 'generate', a.label);
+      const at = clipFrom + Math.round(a.atSec * state.fps);
+      addClip(overlayTrackId(), toTimelineClip(clip, at));
+    }
+  };
+
   const runCaptions = async (style: string, wordsPerLine: number, options: CaptionOptions) => {
     const clip = state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
     if (!clip) { toast('Import footage first.', true); setCaptionsOpen(false); return; }
@@ -381,6 +400,7 @@ export default function App() {
           <button className="btn icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
+          <button className="btn" onClick={openAutoEdit}>Auto-Edit</button>
           <button className="btn" onClick={openCaptions} disabled={captioning}>
             {captioning ? 'Captioning…' : 'Captions'}
           </button>
@@ -479,6 +499,15 @@ export default function App() {
       )}
       {captionsOpen && (
         <CaptionsModal onClose={() => setCaptionsOpen(false)} onGenerate={runCaptions} busy={captioning} />
+      )}
+      {autoEditOpen && footageClip() && (
+        <AutoEditModal
+          clipId={footageClip()!.id}
+          clipFrom={footageClip()!.from}
+          engine={settings.engine}
+          onClose={() => setAutoEditOpen(false)}
+          onApply={applyAutoEdit}
+        />
       )}
       <FeedbackHost />
     </div>

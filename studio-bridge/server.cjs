@@ -423,6 +423,80 @@ async function autoCaption(clipId, style, opts = {}) {
   return { ok: true, clip: clipFromProbe(id, 'Captions', cm) };
 }
 
+// ── Auto-Edit: read the footage speech → plan "moments" → generate motion
+// graphics for each → return them positioned at their timeline seconds. The
+// standalone equivalent of the extension's Auto-Edit, on the local Claude.
+const _aeCache = {}; // reqId → { clipId, sentences, meta }
+const _aeId = () => 'ae' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+
+const AE_PER_MIN = { sparse: 3, moderate: 6, dense: 10, full: 14 };
+function aeMomentCount(density, durationSec, sentenceCount) {
+  if (density === 'full') return Math.min(sentenceCount, 14);
+  const perMin = AE_PER_MIN[density] || 6;
+  return Math.max(1, Math.min(10, Math.round((perMin * durationSec) / 60)));
+}
+
+async function autoEditAnalyze(clipId) {
+  const entry = registry[clipId];
+  if (!entry || !fs.existsSync(entry.path)) return { ok: false, error: 'unknown clip' };
+  const meta = await probe(entry.path);
+  if (!meta) return { ok: false, error: 'could not read clip' };
+  log('auto-edit: extracting audio…');
+  const wav = await extractAudio(entry.path);
+  log('auto-edit: transcribing…');
+  const sentences = await transcribe(wav);
+  if (!sentences.length) return { ok: false, error: 'no speech found — Auto-Edit needs spoken audio' };
+  const reqId = _aeId();
+  _aeCache[reqId] = { clipId, sentences, meta };
+  // a couple of content-driven questions from the transcript (fail-open)
+  let questions = [];
+  try {
+    const transcript = sentences.map((s) => s.text).join(' ').slice(0, 2000);
+    const r = await claudeText(transcript, `Read this video transcript. Return ONLY a JSON array of 2 multiple-choice questions (2-4 options each) whose answers would steer motion-graphic overlays for it (e.g. what to emphasize, visual tone). Form: [{"id":"c1","q":"...","options":[{"value":"x","label":"..."}]}]. No prose.`, 60000);
+    if (r.ok) { const a = r.text.indexOf('['), b = r.text.lastIndexOf(']'); if (a >= 0 && b > a) { const q = JSON.parse(r.text.slice(a, b + 1)); if (Array.isArray(q)) questions = q.slice(0, 3); } }
+  } catch {}
+  return { ok: true, reqId, sentences, durationSec: meta.durationSec, width: meta.width, height: meta.height, questions };
+}
+
+async function autoEditPlan(sentences, count, tone, answers, durationSec) {
+  const transcript = sentences.map((s) => `[${s.start.toFixed(1)}s] ${s.text}`).join('\n').slice(0, 4000);
+  const ans = answers && Object.keys(answers).length ? '\nUser choices: ' + JSON.stringify(answers) : '';
+  const sys = `You are planning motion-graphic OVERLAYS for a talking video. Pick exactly ${count} moments spread across the timeline (0–${durationSec.toFixed(0)}s). For each, write a short prompt for a TRANSPARENT overlay graphic that emphasizes what's said at that moment (a kinetic caption of the key phrase, a stat callout, a lower-third, an arrow, an emoji pop — vary them). Tone: ${tone}.${ans}
+Return ONLY a JSON array of ${count} items, each: {"atSec": number, "durationSec": number (2-4), "type": "caption"|"stat"|"lowerthird"|"callout"|"emoji", "label": "short name", "prompt": "what to generate"}. atSec must be inside the clip and increasing. No prose.`;
+  const r = await claudeText(transcript, sys, 120000);
+  if (!r.ok) return [];
+  const a = r.text.indexOf('['), b = r.text.lastIndexOf(']');
+  if (a < 0 || b <= a) return [];
+  try {
+    const plan = JSON.parse(r.text.slice(a, b + 1));
+    return Array.isArray(plan) ? plan.filter((m) => m && typeof m.atSec === 'number' && m.prompt).slice(0, count) : [];
+  } catch { return []; }
+}
+
+async function autoEditRun({ reqId, density, tone, answers, engine }, onStatus) {
+  const cached = _aeCache[reqId];
+  if (!cached) return { ok: false, error: 'analysis expired — re-run Auto-Edit' };
+  const { sentences, meta } = cached;
+  const count = aeMomentCount(density || 'moderate', meta.durationSec, sentences.length);
+  if (onStatus) onStatus('Planning the edit…');
+  log(`auto-edit: planning ${count} moments…`);
+  const plan = await autoEditPlan(sentences, count, tone || 'minimal', answers, meta.durationSec);
+  if (!plan.length) return { ok: false, error: 'could not plan the edit' };
+  const applied = [];
+  for (let i = 0; i < plan.length; i++) {
+    const m = plan[i];
+    if (onStatus) onStatus(`Rendering graphic ${i + 1} of ${plan.length}…`);
+    log(`auto-edit: rendering ${i + 1}/${plan.length} — ${m.label || m.type}`);
+    const dur = Math.max(2, Math.min(5, Number(m.durationSec) || 3));
+    const g = await generate({ prompt: m.prompt, engine, width: meta.width, height: meta.height, durationSec: dur, mode: 'fast' });
+    if (g.ok && g.clip) applied.push({ clip: g.clip, atSec: Math.max(0, Number(m.atSec) || 0), durationSec: dur, label: m.label || m.type || 'graphic', type: m.type || 'caption' });
+  }
+  delete _aeCache[reqId];
+  if (!applied.length) return { ok: false, error: 'no graphics rendered' };
+  log(`auto-edit: applied ${applied.length}/${plan.length}`);
+  return { ok: true, applied, planned: plan.length };
+}
+
 // ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const u = req.url || '/';
@@ -475,6 +549,22 @@ const server = http.createServer(async (req, res) => {
     if (!body.state) return sendJson(res, 400, { error: 'no timeline' });
     const r = await exportTimeline(body.state, body.name);
     return sendJson(res, r.ok ? 200 : 500, r);
+  }
+  if (req.method === 'POST' && u === '/autoedit/analyze') {
+    const body = await readBody(req);
+    if (!body.clipId) return sendJson(res, 400, { error: 'no clip' });
+    try {
+      const r = await autoEditAnalyze(body.clipId);
+      return sendJson(res, r.ok ? 200 : 500, r);
+    } catch (e) { return sendJson(res, 500, { error: e.message }); }
+  }
+  if (req.method === 'POST' && u === '/autoedit/run') {
+    const body = await readBody(req);
+    if (!body.reqId) return sendJson(res, 400, { error: 'no reqId' });
+    try {
+      const r = await autoEditRun(body);
+      return sendJson(res, r.ok ? 200 : 500, r);
+    } catch (e) { return sendJson(res, 500, { error: e.message }); }
   }
   if (req.method === 'POST' && u === '/caption') {
     const body = await readBody(req);

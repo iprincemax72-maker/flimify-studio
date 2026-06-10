@@ -109,6 +109,26 @@ export async function deleteMedia(id: string): Promise<void> {
   await post('/delete', { id });
 }
 
+// ── Auto-Edit ──
+export type AeAnalysis = {
+  reqId: string;
+  sentences: { start: number; end: number; text: string }[];
+  durationSec: number;
+  width: number;
+  height: number;
+  questions: PlanQuestion[];
+};
+export type AeApplied = { clip: BridgeClip; atSec: number; durationSec: number; label: string; type: string };
+
+export async function autoeditAnalyze(clipId: string): Promise<AeAnalysis> {
+  return post<AeAnalysis>('/autoedit/analyze', { clipId });
+}
+export async function autoeditRun(opts: {
+  reqId: string; density: string; tone: string; answers: Record<string, string>; engine: string;
+}): Promise<{ applied: AeApplied[]; planned: number }> {
+  return post<{ applied: AeApplied[]; planned: number }>('/autoedit/run', opts);
+}
+
 export const thumbUrl = (id: string) => `${BRIDGE}/thumb/${id}`;
 
 /** Normalize a bridge clip → an editor timeline clip placed at `from`. */
