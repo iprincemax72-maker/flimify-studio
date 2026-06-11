@@ -119,9 +119,12 @@ export const TimelineStrip: React.FC<{
       if (e.shiftKey) {
         // some browsers already remap shift+wheel onto deltaX — take whichever axis moved
         const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-        if (delta !== 0 && el.scrollWidth > el.clientWidth) {
+        if (delta !== 0) {
+          // ALWAYS consume it: at the scroll boundary (e.g. zoomed out, nothing to
+          // pan) an un-consumed shift+wheel triggers the browser's horizontal
+          // overscroll → back/forward swipe, which blanks/reloads the app.
           e.preventDefault();
-          el.scrollLeft += delta; // up (−) → left, down (+) → right
+          if (el.scrollWidth > el.clientWidth) el.scrollLeft += delta; // up (−) → left, down (+) → right
         }
       }
     };

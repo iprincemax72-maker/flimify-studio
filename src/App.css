@@ -39,7 +39,9 @@
 * { box-sizing: border-box; margin: 0; }
 html, body, #root { height: 100%; }
 html { background: var(--bg); }
-body { background: transparent; color: var(--text); overflow: hidden; }
+/* overscroll-behavior:none → a horizontal wheel/swipe at any edge can never trigger
+   the browser/Electron back-forward navigation that would blank the app */
+body { background: transparent; color: var(--text); overflow: hidden; overscroll-behavior: none; }
 
 /* chunky scrollbars (CEP/Chromium-friendly, matched to the extension) */
 ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -470,7 +472,7 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .tl-zoom .tl-zoom-fit { font-size: 11px; font-weight: 600; letter-spacing: .03em; color: rgb(var(--accent-rgb)); }
 
 /* translucent so the particle field drifts behind the timeline tracks (cool ✨) */
-.tl { background: color-mix(in srgb, var(--panel-2) 48%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); overflow: auto; position: relative; user-select: none; height: 100%; display: flex; flex-direction: column; justify-content: safe center; align-items: flex-start; }
+.tl { background: color-mix(in srgb, var(--panel-2) 48%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); overflow: auto; overscroll-behavior: contain; position: relative; user-select: none; height: 100%; display: flex; flex-direction: column; justify-content: safe center; align-items: flex-start; }
 .tl-inner { position: relative; min-width: 100%; }
 .tl-ruler { position: relative; border-bottom: 1px solid var(--line); }
 .tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); }
