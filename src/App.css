@@ -448,6 +448,24 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 /* Center the ruler+tracks vertically so they don't jam against the top with
    dead space below. `safe center` keeps it scroll-from-top once there are
    enough tracks to overflow. */
+/* wrapper holds the scrolling timeline + a pinned zoom toolbar (stays put while the strip scrolls) */
+.tl-wrap { position: relative; min-height: 0; height: 100%; }
+.tl-zoom {
+  position: absolute; top: 6px; right: 12px; z-index: 40;
+  display: flex; align-items: center; gap: 3px; padding: 3px;
+  border-radius: 9px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px -10px rgba(0,0,0,.65);
+}
+.tl-zoom button {
+  min-width: 26px; height: 23px; padding: 0 8px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text); cursor: pointer;
+  font: inherit; font-size: 14px; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.tl-zoom button:hover { background: rgba(255,255,255,.08); }
+.tl-zoom .tl-zoom-fit { font-size: 11px; font-weight: 600; letter-spacing: .03em; color: rgb(var(--accent-rgb)); }
+
 /* translucent so the particle field drifts behind the timeline tracks (cool ✨) */
 .tl { background: color-mix(in srgb, var(--panel-2) 48%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); overflow: auto; position: relative; user-select: none; height: 100%; display: flex; flex-direction: column; justify-content: safe center; align-items: flex-start; }
 .tl-inner { position: relative; min-width: 100%; }

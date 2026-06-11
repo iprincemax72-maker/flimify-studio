@@ -2,15 +2,27 @@
 // a divider, then audio tracks (A1, A2…), clip blocks, and a playhead synced to
 // the Player. Click empty space to seek; click a clip to select; drag body to
 // move; edge-drag to trim. RIGHT-CLICK a track header → add/remove tracks.
-import { useEffect, useRef, useState } from 'react';
+//
+// ZOOM: hold **Alt** and scroll the wheel over the timeline to zoom in/out
+// (anchored at the cursor) — or use the −/Fit/+ buttons. "Fit" scales the whole
+// video to the visible width, so a long clip is never cut off past the edge.
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Clip, EditorState, Track, TrackType } from './types';
 import { MAX_TRACKS } from './types';
 
-const PX_PER_FRAME = 5;
+const DEFAULT_PX_PER_FRAME = 5;
+const MIN_PX_PER_FRAME = 0.02; // zoomed all the way out (fits very long videos)
+const MAX_PX_PER_FRAME = 40;   // zoomed all the way in (frame-accurate)
 const TRACK_H = 40;
 const RULER_H = 26;
 const EDGE = 9;
 const LABEL_W = 34; // left gutter for the V1/V2/A1… track headers (matches CSS)
+
+const clampPx = (px: number) => Math.max(MIN_PX_PER_FRAME, Math.min(MAX_PX_PER_FRAME, px));
+// ruler label: "8s" under a minute, "1:30" above
+const fmtSec = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+// candidate seconds-per-tick so labels never crowd (>= ~64px apart)
+const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900];
 
 type Patch = Partial<Pick<Clip, 'from' | 'durationInFrames'>> & { trimBefore?: number };
 
@@ -35,18 +47,81 @@ export const TimelineStrip: React.FC<{
   const wrapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
-  const totalW = state.durationInFrames * PX_PER_FRAME;
+
+  // zoom level (px per frame). pxRef mirrors it so the long-lived mousemove /
+  // wheel / seek handlers always read the *current* zoom without re-subscribing.
+  const [pxPerFrame, setPxPerFrame] = useState(DEFAULT_PX_PER_FRAME);
+  const pxRef = useRef(pxPerFrame);
+  pxRef.current = pxPerFrame;
+  // after a zoom we re-anchor scrollLeft so the frame under the cursor stays put
+  const pendingAnchor = useRef<{ frame: number; clientX: number } | null>(null);
+
+  const totalW = state.durationInFrames * pxPerFrame;
 
   // ordered for display: video tracks with the highest V on top, then audio
   const videoTracks = state.tracks.filter((t) => t.type === 'video');
   const audioTracks = state.tracks.filter((t) => t.type === 'audio');
   const ordered: Track[] = [...videoTracks].reverse().concat(audioTracks);
 
+  // ── zoom helpers ──
+  const zoomAroundClientX = (nextPx: number, clientX: number) => {
+    const el = wrapRef.current;
+    const px = pxRef.current;
+    if (el && px > 0) {
+      const rect = el.getBoundingClientRect();
+      const frame = (clientX - rect.left + el.scrollLeft - LABEL_W) / px;
+      pendingAnchor.current = { frame, clientX };
+    }
+    const np = clampPx(nextPx);
+    pxRef.current = np;           // sync now so back-to-back wheel ticks accumulate
+    setPxPerFrame(np);
+  };
+  const zoomAtCenter = (nextPx: number) => {
+    const el = wrapRef.current;
+    if (!el) { setPxPerFrame(clampPx(nextPx)); return; }
+    const rect = el.getBoundingClientRect();
+    zoomAroundClientX(nextPx, rect.left + el.clientWidth / 2);
+  };
+  const fitAll = () => {
+    const el = wrapRef.current;
+    if (!el || state.durationInFrames <= 0) return;
+    const avail = el.clientWidth - LABEL_W - 24;
+    pendingAnchor.current = null;
+    setPxPerFrame(clampPx(avail / state.durationInFrames));
+    requestAnimationFrame(() => { if (wrapRef.current) wrapRef.current.scrollLeft = 0; });
+  };
+
+  // re-anchor scrollLeft after the zoom re-renders, keeping the cursor frame fixed
+  useLayoutEffect(() => {
+    const a = pendingAnchor.current;
+    const el = wrapRef.current;
+    if (a && el) {
+      const rect = el.getBoundingClientRect();
+      el.scrollLeft = a.frame * pxPerFrame + LABEL_W - (a.clientX - rect.left);
+      pendingAnchor.current = null;
+    }
+  }, [pxPerFrame]);
+
+  // Alt + wheel to zoom. Native non-passive listener so we can preventDefault the
+  // page/timeline scroll while zooming. Plain wheel still scrolls as usual.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.altKey) return; // only zoom while Alt (⌥) is held
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      zoomAroundClientX(pxRef.current * factor, e.clientX);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      const dxFrames = Math.round((e.clientX - d.startX) / PX_PER_FRAME);
+      const dxFrames = Math.round((e.clientX - d.startX) / pxRef.current);
       if (d.mode === 'move') {
         onUpdateClip(d.trackId, d.clipId, { from: Math.max(0, d.startFrom + dxFrames) });
       } else if (d.mode === 'trim-right') {
@@ -83,7 +158,7 @@ export const TimelineStrip: React.FC<{
     onSelect(null);
     const seekAt = (clientX: number) => {
       const x = clientX - el.getBoundingClientRect().left + el.scrollLeft - LABEL_W;
-      onSeek(Math.max(0, Math.min(state.durationInFrames, Math.round(x / PX_PER_FRAME))));
+      onSeek(Math.max(0, Math.min(state.durationInFrames, Math.round(x / pxRef.current))));
     };
     seekAt(e.clientX);
     const move = (ev: MouseEvent) => seekAt(ev.clientX);
@@ -119,59 +194,71 @@ export const TimelineStrip: React.FC<{
     setMenu({ x: e.clientX, y: e.clientY, trackId, clip });
   };
 
+  // adaptive ruler — pick a tick spacing that keeps labels from crowding at any zoom
+  const pxPerSec = pxPerFrame * state.fps;
+  const secStep = TICK_STEPS.find((s) => s * pxPerSec >= 64) ?? TICK_STEPS[TICK_STEPS.length - 1];
+  const frameStep = Math.max(1, secStep * state.fps);
   const ticks: number[] = [];
-  for (let f = 0; f <= state.durationInFrames; f += state.fps) ticks.push(f);
+  for (let f = 0; f <= state.durationInFrames; f += frameStep) ticks.push(f);
   const atMax = state.tracks.length >= MAX_TRACKS;
 
   return (
-    <div className="tl" ref={wrapRef} onMouseDown={seekFromEvent}>
-      <div className="tl-inner" style={{ width: LABEL_W + totalW }}>
-        <div className="tl-ruler" style={{ height: RULER_H }}>
-          {ticks.map((f) => (
-            <div key={f} className="tl-tick" style={{ left: LABEL_W + f * PX_PER_FRAME }}>
-              <span>{Math.round(f / state.fps)}s</span>
-            </div>
-          ))}
-        </div>
+    <div className="tl-wrap">
+      <div className="tl-zoom" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        <button title="Zoom out (Alt + scroll)" onClick={() => zoomAtCenter(pxRef.current / 1.4)}>−</button>
+        <button className="tl-zoom-fit" title="Fit the whole video in view" onClick={fitAll}>Fit</button>
+        <button title="Zoom in (Alt + scroll)" onClick={() => zoomAtCenter(pxRef.current * 1.4)}>+</button>
+      </div>
 
-        {ordered.map((track, i) => {
-          const prev = ordered[i - 1];
-          const divider = prev && prev.type === 'video' && track.type === 'audio';
-          return (
-            <div
-              className={'tl-track ' + track.type + (divider ? ' tl-divider' : '')}
-              key={track.id}
-              style={{ height: TRACK_H }}
-            >
-              <div
-                className="tl-track-label"
-                onMouseDown={(e) => e.stopPropagation()}
-                onContextMenu={(e) => onHeaderMenu(e, track.id)}
-                title="Right-click to add or remove tracks"
-              >
-                {track.label}
+      <div className="tl" ref={wrapRef} onMouseDown={seekFromEvent}>
+        <div className="tl-inner" style={{ width: LABEL_W + totalW }}>
+          <div className="tl-ruler" style={{ height: RULER_H }}>
+            {ticks.map((f) => (
+              <div key={f} className="tl-tick" style={{ left: LABEL_W + f * pxPerFrame }}>
+                <span>{fmtSec(Math.round(f / state.fps))}</span>
               </div>
-              {track.clips.map((clip) => (
-                <div
-                  key={clip.id}
-                  className={'tl-clip ' + clip.kind + (selectedId === clip.id ? ' sel' : '') + (clip.linkId && !clip.unlinked ? ' linked' : '')}
-                  style={{ left: LABEL_W + clip.from * PX_PER_FRAME, width: clip.durationInFrames * PX_PER_FRAME }}
-                  title={clip.name}
-                  onMouseDown={(e) => onClipDown(e, track.id, clip)}
-                  onContextMenu={(e) => onClipMenu(e, track.id, clip)}
-                >
-                  {clip.linkId && !clip.unlinked && <span className="tl-link" title="Linked">🔗</span>}
-                  <span>{clip.name}</span>
-                </div>
-              ))}
-            </div>
-          );
-        })}
+            ))}
+          </div>
 
-        <div
-          className="tl-playhead"
-          style={{ left: LABEL_W + currentFrame * PX_PER_FRAME, height: RULER_H + ordered.length * TRACK_H }}
-        />
+          {ordered.map((track, i) => {
+            const prev = ordered[i - 1];
+            const divider = prev && prev.type === 'video' && track.type === 'audio';
+            return (
+              <div
+                className={'tl-track ' + track.type + (divider ? ' tl-divider' : '')}
+                key={track.id}
+                style={{ height: TRACK_H }}
+              >
+                <div
+                  className="tl-track-label"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => onHeaderMenu(e, track.id)}
+                  title="Right-click to add or remove tracks"
+                >
+                  {track.label}
+                </div>
+                {track.clips.map((clip) => (
+                  <div
+                    key={clip.id}
+                    className={'tl-clip ' + clip.kind + (selectedId === clip.id ? ' sel' : '') + (clip.linkId && !clip.unlinked ? ' linked' : '')}
+                    style={{ left: LABEL_W + clip.from * pxPerFrame, width: clip.durationInFrames * pxPerFrame }}
+                    title={clip.name}
+                    onMouseDown={(e) => onClipDown(e, track.id, clip)}
+                    onContextMenu={(e) => onClipMenu(e, track.id, clip)}
+                  >
+                    {clip.linkId && !clip.unlinked && <span className="tl-link" title="Linked">🔗</span>}
+                    <span>{clip.name}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+
+          <div
+            className="tl-playhead"
+            style={{ left: LABEL_W + currentFrame * pxPerFrame, height: RULER_H + ordered.length * TRACK_H }}
+          />
+        </div>
       </div>
 
       {menu && (
