@@ -456,7 +456,7 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .tl-tick span { position: absolute; left: 4px; top: 5px; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .tl-track { position: relative; border-bottom: 1px solid var(--line); }
 .tl-track-label { position: sticky; left: 0; z-index: 6; width: 34px; height: 100%; display: grid; place-items: center;
-  font-size: 11px; color: var(--dim); background: var(--panel); border-right: 1px solid var(--line); float: left; }
+  font-size: 11px; color: rgba(var(--accent-rgb), 0.78); background: var(--panel); border-right: 1px solid var(--line); float: left; }
 .tl-clip {
   position: absolute; top: 5px; bottom: 5px; border-radius: 6px;
   display: flex; align-items: center; padding: 0 8px; overflow: hidden;
@@ -474,8 +474,8 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .tl-clip.title { background: linear-gradient(180deg,#2f9e6b,#268057); }
 .tl-clip.audio { background: linear-gradient(180deg,#7a5bd0,#5f44b0); }
 /* audio track rows tinted; divider between video + audio stacks */
-.tl-track.audio { background: rgba(122,91,208,0.04); }
-.tl-track.audio .tl-track-label { color: #a994e6; }
+.tl-track.audio { background: rgba(var(--accent-rgb), 0.05); }
+.tl-track.audio .tl-track-label { color: rgb(var(--accent-rgb)); }
 .tl-track.tl-divider { border-top: 2px solid #34384a; }
 
 /* right-click track menu */
