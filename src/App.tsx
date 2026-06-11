@@ -643,7 +643,7 @@ export default function App() {
             width={aspectDims(settings.aspect, state.width, state.height)[0]}
             height={aspectDims(settings.aspect, state.width, state.height)[1]}
             durationSec={settings.duration === 'auto' ? 4 : Number(settings.duration)}
-            defaultEngine={settings.engine}
+            defaultEngine="remotion"
             inject={inject}
             onRender={onRenderLogged}
             onImport={onImportClip}

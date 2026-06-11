@@ -131,11 +131,8 @@ export const SettingsPanel: React.FC<{
 
         <div className="settings-section">
           <div className="settings-section-title">Defaults for new graphics</div>
-          {(!features || features.engine) && (
-            <Row name="Engine" hint="Remotion (React) or HyperFrames (HTML/GSAP)">
-              <Seg value={settings.engine} opts={[{ val: 'remotion', label: 'Remotion' }, { val: 'hyperframes', label: 'HyperFrames' }]} onChange={(v) => onChange({ engine: v })} />
-            </Row>
-          )}
+          {/* Engine default is always Remotion now; switch per-animation via the
+              composer's engine dropdown (owner-only). No global toggle needed. */}
           <Row name="Default aspect ratio" hint="Used when generating a graphic; override anytime">
             <Seg value={settings.aspect} opts={[{ val: 'auto', label: 'Auto' }, { val: '9:16', label: '9:16' }, { val: '16:9', label: '16:9' }, { val: '1:1', label: '1:1' }]} onChange={(v) => onChange({ aspect: v })} />
           </Row>
