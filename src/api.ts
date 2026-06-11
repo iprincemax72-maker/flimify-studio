@@ -232,5 +232,6 @@ export function toTimelineClip(b: BridgeClip, from: number): Clip {
     src: b.src,
     from,
     durationInFrames: b.durationFrames,
+    hasAlpha: b.hasAlpha,
   };
 }

@@ -37,6 +37,9 @@ export type VideoClip = ClipBase & {
   trimBefore?: number;
   /** mute the video's own audio (footage audio is split onto a linked A-clip) */
   muted?: boolean;
+  /** true for transparent ProRes 4444 .mov overlays (AI graphics). HTML5 <Video>
+   *  can't decode ProRes → preview must use OffthreadVideo for these. */
+  hasAlpha?: boolean;
 };
 
 /** A live React/Remotion overlay (an AI graphic before it's flattened). */

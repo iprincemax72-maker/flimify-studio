@@ -3,8 +3,20 @@
 // composition, no preview/export split. Tracks layer bottom→top; clips are
 // time-positioned <Sequence>s.
 import { AbsoluteFill, Audio, OffthreadVideo, Video, Sequence, getRemotionEnvironment } from 'remotion';
-import { DEFAULT_TRANSFORM, dbToGain, type Clip, type EditorState } from './types';
+import { DEFAULT_TRANSFORM, dbToGain, type Clip, type VideoClip, type EditorState } from './types';
 import { KineticTitle } from './overlays';
+
+const VID_STYLE = { width: '100%', height: '100%', objectFit: 'cover' as const };
+
+// Video element for the Player. Native <Video> (HTML5) decodes mp4 footage AND
+// transparent WebM (VP8/VP9 alpha) AI overlays — Chromium composites the alpha —
+// and plays smoothly with no flicker. (ProRes .mov is NOT decodable in the
+// browser/Electron at all — that's why AI overlays are now rendered as WebM
+// alpha, not ProRes.) <OffthreadVideo> is used only for server-side render.
+const VideoLayer: React.FC<{ clip: VideoClip }> = ({ clip }) =>
+  getRemotionEnvironment().isRendering
+    ? <OffthreadVideo src={clip.src} trimBefore={clip.trimBefore} muted={clip.muted} transparent={!!clip.hasAlpha} style={VID_STYLE} />
+    : <Video src={clip.src} trimBefore={clip.trimBefore} muted={clip.muted} pauseWhenBuffering style={VID_STYLE} />;
 
 const ClipView: React.FC<{ clip: Clip }> = ({ clip }) => {
   if (clip.kind === 'audio') {
@@ -14,16 +26,7 @@ const ClipView: React.FC<{ clip: Clip }> = ({ clip }) => {
   const t = clip.transform || DEFAULT_TRANSFORM;
   const inner =
     clip.kind === 'video' ? (
-      // Native <Video> plays smoothly in the <Player> (HTML5 element synced to the
-      // timeline); <OffthreadVideo> is frame-accurate but FLICKERS during live
-      // playback — it's a render component. So preview with <Video> and only use
-      // <OffthreadVideo> when actually rendering. pauseWhenBuffering keeps the
-      // Player in sync instead of glitching if a frame hasn't loaded yet.
-      getRemotionEnvironment().isRendering ? (
-        <OffthreadVideo src={clip.src} trimBefore={clip.trimBefore} muted={clip.muted} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      ) : (
-        <Video src={clip.src} trimBefore={clip.trimBefore} muted={clip.muted} pauseWhenBuffering style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      )
+      <VideoLayer clip={clip} />
     ) : (
       <KineticTitle text={clip.text} color={clip.color} />
     );

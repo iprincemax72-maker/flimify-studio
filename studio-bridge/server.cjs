@@ -263,9 +263,15 @@ When done, emit: [[IMPORT:${outFile}]]`;
   }
   return `${common}
 
-Build a FRESH Remotion composition (transparent — no opaque background AbsoluteFill). Read ~/.claude/skills/remotion-best-practices/rules/transparent-videos.md and timing.md first. Work inside ${RENDER_PROJECT}: write src/<Name>.tsx, register it in src/Root.tsx, then render to EXACTLY this path with alpha:
-  cd "${RENDER_PROJECT}" && npx remotion render src/index.ts <Name> "${outFile}" --codec=prores --prores-profile=4444 --image-format=png --pixel-format=yuva444p10le --mute --hardware-acceleration=if-possible
-ProRes 4444 + yuva444p10le is required so the alpha survives. When done, emit: [[IMPORT:${outFile}]]`;
+Build a FRESH Remotion composition (transparent — no opaque background AbsoluteFill). Read ~/.claude/skills/remotion-best-practices/rules/transparent-videos.md and timing.md first. Work inside ${RENDER_PROJECT}:
+  1. Write src/<Name>.tsx — your component (named export <Name>), with a fully TRANSPARENT root (no opaque AbsoluteFill behind it). If you use @remotion/google-fonts, load ONLY the weights you use + pass ignoreTooManyRequestsWarning.
+  2. Write a tiny standalone entry src/<Name>.entry.tsx that registers ONLY this composition. NEVER render src/index.ts — it imports every past composition (hundreds) and all their fonts, which makes the render take many minutes or stall. The entry:
+       import { registerRoot, Composition } from 'remotion';
+       import { <Name> } from './<Name>';
+       registerRoot(() => ( <Composition id="<Name>" component={<Name>} durationInFrames={<frames>} fps={30} width={${w}} height={${h}} /> ));
+  3. Render THAT entry to EXACTLY this path as a TRANSPARENT WebM (VP8 + alpha). This is required: the editor preview runs in a browser, which can decode WebM-alpha but shows ProRes/.mov as solid BLACK.
+       cd "${RENDER_PROJECT}" && npx remotion render src/<Name>.entry.tsx <Name> "${outFile}" --codec=vp8 --pixel-format=yuva420p --mute --hardware-acceleration=if-possible
+The composition root must be transparent so the WebM alpha channel carries through. When done, emit: [[IMPORT:${outFile}]]`;
 }
 
 // Running generation processes, keyed by reqId, so /cancel can interrupt them.
@@ -279,7 +285,7 @@ function cancelGen(reqId) {
 function generate({ prompt, engine, width, height, durationSec, mode, reqId }, onStatus) {
   return new Promise((resolve) => {
     const w = width || 1920, h = height || 1080, durSec = durationSec || 4;
-    const outFile = path.join(RENDER_DIR, 'gen_' + Date.now().toString(36) + '.mov');
+    const outFile = path.join(RENDER_DIR, 'gen_' + Date.now().toString(36) + (engine === 'hyperframes' ? '.mov' : '.webm'));
     const emit = (text) => { if (reqId) pushProgress(reqId, text); if (onStatus) onStatus(text); };
     emit('Thinking…');
     const sys = genSystemPrompt(engine === 'hyperframes' ? 'hyperframes' : 'remotion', w, h, durSec, outFile, mode);
