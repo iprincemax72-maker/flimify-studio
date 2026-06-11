@@ -102,16 +102,28 @@ export const TimelineStrip: React.FC<{
     }
   }, [pxPerFrame]);
 
-  // Alt + wheel to zoom. Native non-passive listener so we can preventDefault the
-  // page/timeline scroll while zooming. Plain wheel still scrolls as usual.
+  // Wheel over the timeline (native non-passive so we can preventDefault):
+  //   • Alt + wheel  → zoom in/out, anchored at the cursor
+  //   • Shift + wheel → pan horizontally like Premiere (scroll up = left, down = right)
+  //   • plain wheel   → default (vertical track scroll)
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.altKey) return; // only zoom while Alt (⌥) is held
-      e.preventDefault();
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      zoomAroundClientX(pxRef.current * factor, e.clientX);
+      if (e.altKey) {
+        e.preventDefault();
+        const factor = Math.exp(-e.deltaY * 0.0015);
+        zoomAroundClientX(pxRef.current * factor, e.clientX);
+        return;
+      }
+      if (e.shiftKey) {
+        // some browsers already remap shift+wheel onto deltaX — take whichever axis moved
+        const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        if (delta !== 0 && el.scrollWidth > el.clientWidth) {
+          e.preventDefault();
+          el.scrollLeft += delta; // up (−) → left, down (+) → right
+        }
+      }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);

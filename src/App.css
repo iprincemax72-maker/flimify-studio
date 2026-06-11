@@ -67,8 +67,11 @@ body { background: transparent; color: var(--text); overflow: hidden; }
 
 .studio {
   height: 100vh;
+  width: 100vw;
+  overflow: hidden;            /* the timeline scrolls internally — the app never grows past the viewport */
   display: grid;
   grid-template-rows: 44px 1fr 340px;
+  grid-template-columns: minmax(0, 1fr);  /* 0-min so a wide timeline can't stretch the whole layout */
   position: relative;
   background: transparent;
 }
@@ -449,7 +452,7 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
    dead space below. `safe center` keeps it scroll-from-top once there are
    enough tracks to overflow. */
 /* wrapper holds the scrolling timeline + a pinned zoom toolbar (stays put while the strip scrolls) */
-.tl-wrap { position: relative; min-height: 0; height: 100%; }
+.tl-wrap { position: relative; min-height: 0; min-width: 0; height: 100%; }
 .tl-zoom {
   position: absolute; top: 6px; right: 12px; z-index: 40;
   display: flex; align-items: center; gap: 3px; padding: 3px;
