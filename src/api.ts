@@ -223,10 +223,15 @@ export async function autoeditRun(opts: {
 
 export const thumbUrl = (id: string) => `${BRIDGE}/thumb/${id}`;
 
-/** Normalize a bridge clip → an editor timeline clip placed at `from`. */
+// Every PLACEMENT on the timeline needs its own id — the same media (a generated
+// graphic, or a re-imported file) can be dropped multiple times, and two clips
+// sharing an id collide on React keys (the 2nd silently doesn't render) and break
+// select/move/delete. The media itself is still referenced by `src`.
+let _placementSeq = 0;
+/** Normalize a bridge clip → an editor timeline clip placed at `from` (unique id). */
 export function toTimelineClip(b: BridgeClip, from: number): Clip {
   return {
-    id: b.id,
+    id: b.id + '@' + (++_placementSeq).toString(36) + Date.now().toString(36),
     kind: 'video',
     name: b.name,
     src: b.src,

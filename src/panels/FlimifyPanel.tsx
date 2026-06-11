@@ -421,7 +421,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
                         </div>
                         <div className="fp-card-meta"><b>{m.clip.name}</b><span>{m.status}</span></div>
                         <div className="fp-card-actions">
-                          <button className="fp-card-btn primary" onClick={() => importCard(m)} disabled={m.imported}>{m.imported ? 'Imported' : 'Import to Timeline'}</button>
+                          <button className="fp-card-btn primary" onClick={() => importCard(m)} title={m.imported ? 'Drop another copy on the timeline' : undefined}>{m.imported ? 'Import again' : 'Import to Timeline'}</button>
                           <button className="fp-card-btn" onClick={() => onPreview(m.clip)}>Preview</button>
                           <button className="fp-card-btn" onClick={() => changesCard(m)}>Changes</button>
                           <button className="fp-card-btn danger" onClick={() => deleteCard(m)}>Delete</button>
