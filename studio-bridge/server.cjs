@@ -270,7 +270,7 @@ Build a FRESH Remotion composition (transparent — no opaque background Absolut
        import { <Name> } from './<Name>';
        registerRoot(() => ( <Composition id="<Name>" component={<Name>} durationInFrames={<frames>} fps={30} width={${w}} height={${h}} /> ));
   3. Render THAT entry to EXACTLY this path as a TRANSPARENT WebM (VP8 + alpha). This is required: the editor preview runs in a browser, which can decode WebM-alpha but shows ProRes/.mov as solid BLACK.
-       cd "${RENDER_PROJECT}" && npx remotion render src/<Name>.entry.tsx <Name> "${outFile}" --codec=vp8 --pixel-format=yuva420p --mute --hardware-acceleration=if-possible
+       cd "${RENDER_PROJECT}" && npx remotion render src/<Name>.entry.tsx <Name> "${outFile}" --codec=vp9 --pixel-format=yuva420p --image-format=png --mute
 The composition root must be transparent so the WebM alpha channel carries through. When done, emit: [[IMPORT:${outFile}]]`;
 }
 
