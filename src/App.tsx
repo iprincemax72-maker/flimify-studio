@@ -51,7 +51,7 @@ const emptyState = (): EditorState => ({
 const recomputeDuration = (tracks: Track[]): number => {
   let end = 0;
   for (const t of tracks) for (const c of t.clips) end = Math.max(end, c.from + c.durationInFrames);
-  return Math.max(end, 1);
+  return end > 0 ? end : 300; // empty timeline → a usable default 10s, not 1 frame
 };
 
 const fmt = (frame: number, fps: number) => {
@@ -195,6 +195,9 @@ export default function App() {
   }, []);
 
   const hasClips = useMemo(() => state.tracks.some((t) => t.clips.length), [state]);
+  // when the timeline empties out, snap the playhead back to 0 (else the transport
+  // keeps showing a stale time like 0:10:23 over an empty 0:00:00 timeline).
+  useEffect(() => { if (!hasClips) setFrame(0); }, [hasClips]);
   // Stable inputProps reference: App re-renders ~60fps during playback (playhead
   // sync), so a fresh `{ state }` object each render would force Remotion to
   // re-render the whole video composition every frame, starving the Player's
@@ -296,6 +299,43 @@ export default function App() {
       return { ...s, width: clip.width, height: clip.height, tracks, durationInFrames: recomputeDuration(tracks) };
     });
   };
+  // ── place a Media-bin item onto the timeline (drag-drop or double-click) ──
+  // Unlike the one-shot import, this can run many times, so every placement gets a
+  // UNIQUE clip id (+ unique link id) — re-drops never collide on React keys.
+  const draggedMediaRef = useRef<BridgeClip | null>(null);
+  const placeMediaOnTimeline = (clip: BridgeClip, targetTrackId: string | null, frame: number) => {
+    setState((s) => {
+      const at = Math.max(0, Math.round(frame));
+      const target = targetTrackId ? s.tracks.find((t) => t.id === targetTrackId) : null;
+      const baseV = s.tracks.find((t) => t.type === 'video');
+      const baseA = s.tracks.find((t) => t.type === 'audio');
+      const vTrack = (target && target.type === 'video') ? target : baseV;
+      if (!vTrack) return s;
+      const aTrack = (target && target.type === 'audio') ? target : baseA;
+      const v = toTimelineClip(clip, at);                // unique id per placement
+      const linkId = clip.hasAudio ? v.id : undefined;   // unique link per placement
+      const videoClip: Clip = { ...v, muted: !!clip.hasAudio, linkId } as Clip;
+      let tracks = s.tracks.map((t) => (t.id === vTrack.id ? { ...t, clips: [...t.clips, videoClip] } : t));
+      if (clip.hasAudio && aTrack) {
+        const audioClip: Clip = { id: v.id + '_a', kind: 'audio', name: clip.name, src: clip.src, from: at, durationInFrames: clip.durationFrames, linkId };
+        tracks = tracks.map((t) => (t.id === aTrack.id ? { ...t, clips: [...t.clips, audioClip] } : t));
+      }
+      return { ...s, width: clip.width || s.width, height: clip.height || s.height, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+  };
+  // drop a dragged bin item onto a specific track at a specific frame
+  const onDropMedia = (trackId: string, frame: number) => {
+    const clip = draggedMediaRef.current;
+    if (clip) placeMediaOnTimeline(clip, trackId, frame);
+    draggedMediaRef.current = null;
+  };
+  // double-click a bin item → append it after whatever is on the base video track
+  const addMediaToTimeline = (clip: BridgeClip) => {
+    const baseV = state.tracks.find((t) => t.type === 'video');
+    const at = baseV ? baseV.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0) : 0;
+    placeMediaOnTimeline(clip, baseV ? baseV.id : null, at);
+  };
+
   const importByPath = async (p: string) => {
     setStatus('Importing…');
     try { landImportedClip(await importPath(p)); setStatus(''); }
@@ -604,7 +644,15 @@ export default function App() {
               <div className="bin-list">
                 {bin.length === 0 && <div className="bin-empty">No media yet</div>}
                 {bin.map((c) => (
-                  <div className="bin-item" key={c.id}>
+                  <div
+                    className="bin-item"
+                    key={c.id}
+                    draggable
+                    onDragStart={(e) => { draggedMediaRef.current = c; e.dataTransfer.effectAllowed = 'copy'; try { e.dataTransfer.setData('text/plain', c.name); } catch { /* ignore */ } }}
+                    onDragEnd={() => { draggedMediaRef.current = null; }}
+                    onDoubleClick={() => addMediaToTimeline(c)}
+                    title="Drag onto the timeline — or double-click to add it"
+                  >
                     <div className="bin-thumb" />
                     <div className="bin-meta"><b>{c.name}</b><span>{c.width}×{c.height}</span></div>
                   </div>
@@ -678,6 +726,7 @@ export default function App() {
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
         onToggleLink={toggleLink}
+        onDropMedia={onDropMedia}
       />
 
       {settingsOpen && (

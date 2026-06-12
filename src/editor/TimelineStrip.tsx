@@ -43,8 +43,10 @@ export const TimelineStrip: React.FC<{
   onAddTrack: (type: TrackType) => void;
   onDeleteTrack: (trackId: string) => void;
   onToggleLink: (clipId: string) => void;
-}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink }) => {
+  onDropMedia?: (trackId: string, frame: number) => void;
+}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink, onDropMedia }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const [dropTrack, setDropTrack] = useState<string | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
 
@@ -240,9 +242,21 @@ export const TimelineStrip: React.FC<{
             const divider = prev && prev.type === 'video' && track.type === 'audio';
             return (
               <div
-                className={'tl-track ' + track.type + (divider ? ' tl-divider' : '')}
+                className={'tl-track ' + track.type + (divider ? ' tl-divider' : '') + (dropTrack === track.id ? ' drop-target' : '')}
                 key={track.id}
                 style={{ height: TRACK_H }}
+                onDragOver={onDropMedia ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (dropTrack !== track.id) setDropTrack(track.id); } : undefined}
+                onDragLeave={onDropMedia ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTrack((d) => (d === track.id ? null : d)); } : undefined}
+                onDrop={onDropMedia ? (e) => {
+                  e.preventDefault(); e.stopPropagation();
+                  const el = wrapRef.current;
+                  if (el) {
+                    const rect = el.getBoundingClientRect();
+                    const x = e.clientX - rect.left + el.scrollLeft - LABEL_W;
+                    onDropMedia(track.id, Math.max(0, Math.round(x / pxRef.current)));
+                  }
+                  setDropTrack(null);
+                } : undefined}
               >
                 <div
                   className="tl-track-label"

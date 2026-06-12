@@ -178,7 +178,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !important; }
 
 /* media bin */
-.bin-item { display: flex; gap: 10px; padding: 10px 12px; align-items: center; }
+.bin-item { display: flex; gap: 10px; padding: 10px 12px; align-items: center; cursor: grab; border-radius: 8px; }
+.bin-item:hover { background: rgba(255,255,255,.04); }
+.bin-item:active { cursor: grabbing; }
 .bin-thumb { width: 56px; height: 32px; border-radius: 5px; background:
   repeating-linear-gradient(45deg,#2a2d34,#2a2d34 6px,#23262c 6px,#23262c 12px); flex: 0 0 auto; }
 .bin-meta { display: flex; flex-direction: column; min-width: 0; }
@@ -478,6 +480,8 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); }
 .tl-tick span { position: absolute; left: 4px; top: 5px; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .tl-track { position: relative; border-bottom: 1px solid var(--line); }
+/* drop target while dragging a Media-bin item over a track */
+.tl-track.drop-target { background: rgba(var(--accent-rgb), 0.12); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45); }
 .tl-track-label { position: sticky; left: 0; z-index: 6; width: 34px; height: 100%; display: grid; place-items: center;
   font-size: 11px; color: rgba(var(--accent-rgb), 0.78); background: var(--panel); border-right: 1px solid var(--line); float: left; }
 .tl-clip {
