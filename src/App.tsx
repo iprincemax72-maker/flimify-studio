@@ -439,6 +439,19 @@ export default function App() {
   // ── Auto-Edit: read footage speech → plan + render graphics → place at their
   // timeline moments on overlay tracks ──
   const [autoEditOpen, setAutoEditOpen] = useState(false);
+  // Esc closes whichever overlay is open (settings is a full-screen inset:0 panel,
+  // so without this you can feel "stuck"). Works even with a field focused.
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (settingsOpen) { e.preventDefault(); setSettingsOpen(false); }
+      else if (historyOpen) { e.preventDefault(); setHistoryOpen(false); }
+      else if (captionsOpen) { e.preventDefault(); setCaptionsOpen(false); }
+      else if (autoEditOpen) { e.preventDefault(); setAutoEditOpen(false); }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [settingsOpen, historyOpen, captionsOpen, autoEditOpen]);
   const footageClip = () => state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
   const openAutoEdit = () => {
     if (!footageClip()) { toast('Import footage first — Auto-Edit reads its speech.', true); return; }
