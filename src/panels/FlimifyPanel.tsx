@@ -88,7 +88,7 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
       if (meta && e.shiftKey && (e.key === 'T' || e.key === 't')) {
         e.preventDefault();
         const cur = ts[idx] || ts[0];
-        const t = newTab('animation', cur.engine, cur.renderMode);
+        const t = newTab('animation', defaultEngine, cur.renderMode);
         setTabs((arr) => [...arr, t]); setActiveId(t.id); return;
       }
       if (meta && e.shiftKey && (e.key === 'W' || e.key === 'w')) {
@@ -114,7 +114,9 @@ export const FlimifyPanel: React.FC<Props> = ({ width, height, durationSec = 4, 
 
   // ── tabs ──
   const addTab = (type: 'animation' | 'chat') => {
-    const t = newTab(type, active.engine, active.renderMode);
+    // a fresh tab always starts on the default engine (Remotion) — never inherit
+    // whatever the previous tab happened to be switched to.
+    const t = newTab(type, defaultEngine, active.renderMode);
     setTabs((ts) => [...ts, t]);
     setActiveId(t.id);
   };
