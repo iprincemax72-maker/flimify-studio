@@ -27,33 +27,116 @@ const RENDER_PROJECT = process.env.FLIMIFY_RENDER_PROJECT || path.join(HOME, 'Pr
 // Web mode: the bridge can also host the built editor (dist/) so the app runs
 // in a plain browser at http://localhost:3939/app — same local Claude, no key.
 const DIST_DIR = process.env.FLIMIFY_DIST_DIR || path.join(__dirname, '..', 'dist');
-// ── PATH repair (CRITICAL) ─────────────────────────────────────────────────
-// A GUI-launched macOS app inherits a sparse PATH (/usr/bin:/bin:/usr/sbin:
-// /sbin) — it does NOT include /opt/homebrew/bin or ~/.local/bin. So a bridge
-// spawned by the packaged app can't find ffprobe / npx / node / claude, and
-// import + generate + export silently fail. Prepend the real tool dirs so every
-// child process (ffmpeg, claude, npx) resolves its binaries.
-const _binDirs = [
-  '/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local', 'bin'),
-  '/opt/homebrew/sbin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
-];
-process.env.PATH = [...new Set([..._binDirs, ...((process.env.PATH || '').split(path.delimiter))])]
-  .filter(Boolean).join(path.delimiter);
+// ── PATH repair + binary resolution (CRITICAL, cross-platform) ─────────────
+// A GUI-launched app inherits a sparse PATH and can't find ffmpeg / npx / claude
+// → import + generate + export silently fail. Prepend the real tool dirs for the
+// running OS so every child process resolves its binaries.
+//   macOS/Linux: /opt/homebrew/bin, /usr/local/bin, ~/.local/bin …
+//   Windows:     %APPDATA%\npm (npm-global), Program Files\nodejs, … (Path too)
+const IS_WIN = process.platform === 'win32';
+const _binDirs = IS_WIN
+  ? [
+      path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'npm'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
+      path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'Programs', 'nodejs'),
+      path.join(HOME, '.local', 'bin'),
+      ...((process.env.PATH || process.env.Path || '').split(path.delimiter)),
+    ]
+  : [
+      '/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local', 'bin'),
+      '/opt/homebrew/sbin', '/usr/bin', '/bin', '/usr/sbin', '/sbin',
+      ...((process.env.PATH || '').split(path.delimiter)),
+    ];
+process.env.PATH = [...new Set(_binDirs.filter(Boolean))].join(path.delimiter);
 
 // Resolve a binary to an absolute path: explicit candidates first, then the
-// repaired PATH, then bare name (let spawn try).
+// repaired PATH (trying Windows extensions), then bare name (let spawn try).
+const _exeExts = IS_WIN ? ['.exe', '.cmd', '.bat', ''] : [''];
 function resolveBin(name, candidates) {
-  for (const c of candidates || []) { try { if (fs.existsSync(c)) return c; } catch {} }
+  for (const c of candidates || []) { try { if (c && fs.existsSync(c)) return c; } catch {} }
   for (const d of process.env.PATH.split(path.delimiter)) {
-    try { const p = path.join(d, name); if (fs.existsSync(p)) return p; } catch {}
+    for (const ext of _exeExts) {
+      try { const p = path.join(d, name + ext); if (fs.existsSync(p)) return p; } catch {}
+    }
   }
   return name;
 }
 
-const FFMPEG = process.env.FLIMIFY_FFMPEG || resolveBin('ffmpeg', ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']);
-const FFPROBE = resolveBin('ffprobe', [FFMPEG.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), '/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe']);
-const CLAUDE = process.env.FLIMIFY_CLAUDE || resolveBin('claude', [path.join(HOME, '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude']);
-const NPX = resolveBin('npx', [path.join(HOME, '.local', 'bin', 'npx'), '/opt/homebrew/bin/npx', '/usr/local/bin/npx']);
+const FFMPEG = process.env.FLIMIFY_FFMPEG || resolveBin('ffmpeg',
+  IS_WIN ? [] : ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']);
+const FFPROBE = process.env.FLIMIFY_FFPROBE || resolveBin('ffprobe',
+  [FFMPEG.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1'), ...(IS_WIN ? [] : ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'])]);
+const CLAUDE = process.env.FLIMIFY_CLAUDE || resolveBin('claude',
+  IS_WIN ? [] : [path.join(HOME, '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude']);
+const NPX = process.env.FLIMIFY_NPX || resolveBin('npx',
+  IS_WIN ? [] : [path.join(HOME, '.local', 'bin', 'npx'), '/opt/homebrew/bin/npx', '/usr/local/bin/npx']);
+
+// ── Windows-safe launchers ─────────────────────────────────────────────────
+// On Windows `claude`/`npx` are .cmd shims that spawn() can't exec directly, and
+// routing claude's multi-KB --append-system-prompt through cmd.exe mangles it.
+// So on Windows we run the CLI's JS entry with THIS same Node (process.execPath)
+// — clean args, no shell. macOS/Linux paths are LEFT UNCHANGED (zero regression).
+let _claudeTarget = null;
+function resolveClaude() {
+  if (_claudeTarget) return _claudeTarget;
+  if (!IS_WIN) { _claudeTarget = { cmd: CLAUDE, prefixArgs: [] }; return _claudeTarget; }
+  // 1) a real claude.exe on PATH (native installer)
+  try {
+    for (const d of (process.env.PATH || '').split(path.delimiter)) {
+      if (!d) continue;
+      const exe = path.join(d, 'claude.exe');
+      try { if (fs.existsSync(exe)) { _claudeTarget = { cmd: exe, prefixArgs: [] }; return _claudeTarget; } } catch {}
+    }
+  } catch {}
+  // 2) npm global install → run the package's bin .js with node directly
+  const roots = [];
+  if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code'));
+  roots.push(path.join(HOME, 'AppData', 'Roaming', 'npm', 'node_modules', '@anthropic-ai', 'claude-code'));
+  if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'nodejs', 'node_modules', '@anthropic-ai', 'claude-code'));
+  for (const root of roots) {
+    try {
+      const pj = path.join(root, 'package.json');
+      if (!fs.existsSync(pj)) continue;
+      const bin = (JSON.parse(fs.readFileSync(pj, 'utf8')) || {}).bin;
+      let rel = (typeof bin === 'string') ? bin : (bin && (bin.claude || Object.values(bin)[0]));
+      if (!rel) rel = 'cli.js';
+      const entry = path.join(root, rel);
+      if (!fs.existsSync(entry)) continue;
+      const ext = path.extname(entry).toLowerCase();
+      if (ext === '.exe') { _claudeTarget = { cmd: entry, prefixArgs: [] }; return _claudeTarget; }
+      if (ext === '.cmd' || ext === '.bat') { _claudeTarget = { cmd: entry, prefixArgs: [], shell: true }; return _claudeTarget; }
+      _claudeTarget = { cmd: process.execPath, prefixArgs: [entry] }; return _claudeTarget;
+    } catch {}
+  }
+  _claudeTarget = { cmd: CLAUDE || 'claude', prefixArgs: [], shell: true };
+  return _claudeTarget;
+}
+// Drop-in replacement for spawn(CLAUDE, args, opts).
+function spawnClaude(args, opts) {
+  const t = resolveClaude();
+  const o = Object.assign({}, opts);
+  if (t.shell) o.shell = true;
+  if (IS_WIN) o.windowsHide = true;
+  return spawn(t.cmd, t.prefixArgs.concat(args || []), o);
+}
+// Drop-in replacement for spawn(NPX, ['remotion', …], opts). macOS/Linux keep the
+// exact npx call; Windows runs the render project's local Remotion CLI JS with
+// node (no shell → tolerates spaces in the user's home path).
+function remotionCliJs() {
+  for (const c of [
+    path.join(RENDER_PROJECT, 'node_modules', '@remotion', 'cli', 'remotion-cli.js'),
+    path.join(RENDER_PROJECT, 'node_modules', 'remotion', 'dist', 'cli.js'),
+  ]) { try { if (fs.existsSync(c)) return c; } catch {} }
+  return null;
+}
+function spawnRemotion(args, opts) {
+  if (!IS_WIN) return spawn(NPX, args, opts);              // mac/linux: unchanged
+  const a = args[0] === 'remotion' ? args.slice(1) : args; // drop leading 'remotion'
+  const o = Object.assign({}, opts); o.windowsHide = true;
+  const cli = remotionCliJs();
+  if (cli) return spawn(process.execPath, [cli, ...a], o);  // node remotion-cli.js render …
+  o.shell = true; return spawn(NPX, args, o);               // last resort
+}
 const FPS = 30;
 
 for (const d of [STUDIO_DIR, MEDIA_DIR, RENDER_DIR, WORK_DIR]) fs.mkdirSync(d, { recursive: true });
@@ -293,7 +376,7 @@ function generate({ prompt, engine, width, height, durationSec, mode, reqId }, o
       '--permission-mode', 'bypassPermissions', '--append-system-prompt', sys,
       '--no-session-persistence', prompt];
     let proc;
-    try { proc = spawn(CLAUDE, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); if (reqId) genProcs[reqId] = proc; }
+    try { proc = spawnClaude(args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); if (reqId) genProcs[reqId] = proc; }
     catch (e) { return resolve({ ok: false, error: 'claude not available: ' + e.message }); }
     let buf = '', last = Date.now(), dbg = '';
     proc.stdout.on('data', (c) => {
@@ -353,7 +436,7 @@ function claudeText(prompt, sys, timeoutMs = 90000) {
     if (sys) args.push('--append-system-prompt', sys);
     args.push(prompt);
     let proc;
-    try { proc = spawn(CLAUDE, args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawnClaude(args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ ok: false, error: 'claude not available: ' + e.message }); }
     let out = '', er = '';
     proc.stdout.on('data', (c) => (out += c.toString()));
@@ -407,7 +490,7 @@ function exportTimeline(state, name) {
     const args = ['remotion', 'render', entry, 'StudioTimeline', out,
       '--props=' + propsFile, '--codec=h264', '--mute', '--hardware-acceleration=if-possible', '--log=error'];
     let proc;
-    try { proc = spawn(NPX, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawnRemotion(args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ ok: false, error: e.message }); }
     let err = '';
     proc.stderr.on('data', (c) => { err += c.toString(); });
@@ -495,7 +578,7 @@ registerRoot(Root);`;
     fs.writeFileSync(entryAbs, entry);
     fs.writeFileSync(propsFile, JSON.stringify({ lines, style, options: options || {}, fps, width: w, height: h }));
     const args = ['remotion', 'render', entryRel, 'Captions', outFile, '--codec=prores', '--prores-profile=4444', '--image-format=png', '--pixel-format=yuva444p10le', '--mute', '--hardware-acceleration=if-possible', '--props=' + propsFile, '--log=error'];
-    const proc = spawn(NPX, args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawnRemotion(args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let er = ''; proc.stderr.on('data', (c) => (er += c.toString()));
     const clean = () => { try { fs.unlinkSync(entryAbs); } catch {} try { fs.unlinkSync(propsFile); } catch {} };
     proc.on('close', (code) => { clean(); (code === 0 && fs.existsSync(outFile)) ? resolve({ ok: true, file: outFile }) : resolve({ ok: false, error: 'caption render failed: ' + er.slice(-300) }); });

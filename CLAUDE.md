@@ -23,6 +23,26 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
   `/app` and accepts browser uploads (`/upload`).
 - Render project reused from `~/PremiereClaude/remotion-intro`.
 
+## Windows + cross-platform builds
+- The bridge (`server.cjs`) is **cross-platform**. macOS/Linux paths are
+  UNCHANGED; Windows adds: OS-aware PATH repair (`%APPDATA%\npm`, `Program Files\
+  nodejs`), `.exe`/`.cmd` resolution, and **`spawnClaude` / `spawnRemotion`** —
+  on Windows `claude`/`npx` are `.cmd` shims `spawn()` can't exec (and a shell
+  mangles claude's multi-KB system prompt), so we run the CLI's JS entry with
+  `process.execPath` (ported from the Premiere extension's `resolveClaude`).
+- **Build installers:** `npm run dist:mac` (dmg) / `npm run dist:win` (NSIS x64,
+  `win.target` pins `arch:["x64"]`). electron-builder builds the **Windows
+  installer on macOS too** (verified → `release/Flimify Studio Setup <v>.exe`,
+  ~104 MB; not code-signed → Windows SmartScreen "unknown publisher" until a cert
+  is added). `.github/workflows/build.yml` builds both on real runners (push a
+  `v*` tag or run it from the Actions tab) once the repo is on GitHub.
+- **Windows runtime prereqs for *generation*** (same as the extension): Claude CLI
+  (`npm i -g @anthropic-ai/claude-code` + `claude /login`), **ffmpeg** (`winget
+  install Gyan.FFmpeg`), and a Remotion render project (set `FLIMIFY_RENDER_PROJECT`
+  or have `~/PremiereClaude/remotion-intro`). The app installs + opens without
+  these; generation needs them. Windows runtime is coded-from-proven-patterns but
+  **not yet smoke-tested on a real Windows box.**
+
 ## Key bridge endpoints
 `/health /media/:id /thumb/:id /import /upload /generate /cancel /export
 /caption /autoedit/analyze /autoedit/run /expand /plan/questions

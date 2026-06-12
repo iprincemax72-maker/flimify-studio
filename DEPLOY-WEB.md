@@ -5,6 +5,17 @@ the **same origin** (`src/api.ts`), so the exact same build works behind any hos
 (verified serving on a non-localhost port). What's left is **where to run the
 backend** and **how to point flimify.com at it**.
 
+> **The website IS the desktop app — same `dist/`.** Every editor feature ships in
+> this one build, so the site automatically has all of it: timeline **zoom**
+> (Alt+scroll) + **Fit**, **Shift+scroll** horizontal pan, the **particle**
+> background, **theme-aware** track labels, and the overscroll/nav guards. Nothing
+> extra to "port to the web" — `npm run build` once, serve `dist/`, done. (Verified
+> in web mode: particles, the −/Fit/+ toolbar, themed labels, same-origin API.)
+>
+> A ready-made branded entry point lives at **`public/launch.html`** → `dist/launch.html`.
+> Set its `EDITOR_URL`, host it at `flimify.com/launch` (or link the URL directly),
+> and it forwards visitors into the editor — see §3.
+
 > You do NOT need to buy a domain. Use a free **subdomain** (`app.flimify.com`)
 > or a **path** (`flimify.com/editor`) — both are free under flimify.com.
 

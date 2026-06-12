@@ -1,0 +1,54 @@
+# Cross-platform Electron app builder for Flimify Studio.
+# Builds installers on native runners (Windows NSIS on windows-latest, macOS DMG on macos-latest).
+# Requires: repo pushed to GitHub. Run via Actions tab ("Run workflow") or push a v* tag.
+
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+            artifact-path: release/*.dmg
+            artifact-name: dmg
+          - os: windows-latest
+            target: win
+            artifact-path: release/*.exe
+            artifact-name: exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend and bridge
+        run: npm run build
+
+      - name: Build installer (${{ matrix.target }})
+        run: npx electron-builder --${{ matrix.target }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (${{ matrix.artifact-name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: flimify-studio-${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          retention-days: 30
