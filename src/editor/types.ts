@@ -27,6 +27,11 @@ export type ClipBase = {
   linkId?: string;
   /** true when the user has unlinked a linked pair (edit independently) */
   unlinked?: boolean;
+  /** fade-in / fade-out length in frames (opacity for visuals, volume for audio) */
+  fadeIn?: number;
+  fadeOut?: number;
+  /** colour label (hex) shown on the timeline block */
+  color?: string;
 };
 
 /** Imported footage, or a pre-rendered AI overlay (.mov) — both are video. */
@@ -70,7 +75,14 @@ export type Track = {
   type: TrackType;
   label: string;     // V1, V2… / A1, A2…
   clips: Clip[];
+  /** muted (hidden video / silent audio), soloed, or locked (no edits) */
+  muted?: boolean;
+  solo?: boolean;
+  locked?: boolean;
 };
+
+/** A named point on the timeline (jump + reference). */
+export type Marker = { id: string; frame: number; label?: string };
 
 export type EditorState = {
   fps: number;
@@ -79,6 +91,8 @@ export type EditorState = {
   durationInFrames: number;
   /** video tracks first (V1 = base), then audio tracks */
   tracks: Track[];
+  /** timeline markers (chapter/cue points) */
+  markers?: Marker[];
 };
 
 export const MAX_TRACKS = 100;

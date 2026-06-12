@@ -81,6 +81,11 @@ export default function App() {
   const [inject, setInject] = useState<{ text: string; id: number } | null>(null);
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const [leftTab, setLeftTab] = useState<'media' | 'fx'>('media');
+  const [clipboard, setClipboard] = useState<Clip | null>(null);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [loop, setLoop] = useState(false);
+  const [grid, setGrid] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const playerRef = useRef<PlayerRef>(null);
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
@@ -122,6 +127,10 @@ export default function App() {
   const updateSelectedAudio = (gainDb: number) => {
     if (!selected) return;
     updateClip(selected.trackId, selected.clip.id, { gainDb } as Partial<Clip>);
+  };
+  const updateSelectedFade = (patch: { fadeIn?: number; fadeOut?: number }) => {
+    if (!selected) return;
+    updateClip(selected.trackId, selected.clip.id, patch as Partial<Clip>);
   };
 
   // persist panel sizes
@@ -347,28 +356,138 @@ export default function App() {
     setSelectedId(dup.id);
   };
 
+  // ── seek helper (clamped to the timeline) ──
+  const seekTo = (f: number) => {
+    const dur = stateRef.current.durationInFrames;
+    playerRef.current?.seekTo(Math.max(0, Math.min(dur, Math.round(f))));
+  };
+
+  // ── Ripple delete (⇧⌫): remove the selected clip AND close the gap behind it ──
+  const rippleDelete = () => {
+    const id = selectedIdRef.current; if (!id) return;
+    const s = stateRef.current;
+    let trackId: string | undefined, gapFrom = 0, gapLen = 0, linkId: string | undefined;
+    for (const t of s.tracks) for (const c of t.clips) if (c.id === id) { trackId = t.id; gapFrom = c.from; gapLen = c.durationInFrames; if (!c.unlinked) linkId = c.linkId; }
+    if (!trackId) return;
+    checkpoint();
+    setState((st) => {
+      const tracks = st.tracks.map((t) => {
+        let clips = t.clips.filter((c) => c.id !== id && !(linkId && c.linkId === linkId && !c.unlinked));
+        if (t.id === trackId) clips = clips.map((c) => (c.from >= gapFrom + gapLen ? { ...c, from: Math.max(0, c.from - gapLen) } : c));
+        return { ...t, clips };
+      });
+      return { ...st, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+    setSelectedId(null);
+  };
+
+  // ── Copy / Cut / Paste clips (⌘C / ⌘X / ⌘V) — paste at the playhead ──
+  const copySelected = () => { const id = selectedIdRef.current; if (!id) return; for (const t of stateRef.current.tracks) for (const c of t.clips) if (c.id === id) setClipboard(c); };
+  const cutSelected = () => { copySelected(); deleteSelected(); };
+  const pasteClip = () => {
+    const c = clipboard; if (!c) return;
+    const at = Math.round(frameRef.current);
+    const s = stateRef.current;
+    const target = s.tracks.find((t) => (c.kind === 'audio' ? t.type === 'audio' : t.type === 'video'));
+    if (!target) return;
+    checkpoint();
+    const copy = { ...c, id: c.id + '_p' + Date.now().toString(36), from: at, linkId: undefined } as Clip;
+    setState((st) => { const tracks = st.tracks.map((t) => (t.id === target.id ? { ...t, clips: [...t.clips, copy] } : t)); return { ...st, tracks, durationInFrames: recomputeDuration(tracks) }; });
+    setSelectedId(copy.id);
+  };
+
+  // ── Markers (M add at playhead, ⇧M clear all) ──
+  const addMarker = () => {
+    const f = Math.round(frameRef.current);
+    checkpoint();
+    setState((s) => ({ ...s, markers: [...(s.markers || []).filter((m) => m.frame !== f), { id: 'mk' + Date.now().toString(36), frame: f }].sort((a, b) => a.frame - b.frame) }));
+  };
+  const clearMarkers = () => { if (!(stateRef.current.markers || []).length) return; checkpoint(); setState((s) => ({ ...s, markers: [] })); };
+
+  // ── Playhead navigation: frame step, Home/End, jump to nearest edit point ──
+  const stepFrame = (dir: number, big: boolean) => seekTo(frameRef.current + dir * (big ? stateRef.current.fps : 1));
+  const jumpEdit = (dir: number) => {
+    const s = stateRef.current, f = Math.round(frameRef.current);
+    const pts = new Set<number>([0, s.durationInFrames]);
+    for (const t of s.tracks) for (const c of t.clips) { pts.add(c.from); pts.add(c.from + c.durationInFrames); }
+    for (const m of s.markers || []) pts.add(m.frame);
+    const sorted = [...pts].sort((a, b) => a - b);
+    const next = dir > 0 ? sorted.find((p) => p > f) : [...sorted].reverse().find((p) => p < f);
+    if (next != null) seekTo(next);
+  };
+
+  // ── Aspect-ratio presets (swap composition dimensions) ──
+  const setAspectDims = (w: number, h: number) => { checkpoint(); setState((s) => ({ ...s, width: w, height: h })); };
+
+  // ── Fullscreen preview ──
+  const playerWrapRef = useRef<HTMLDivElement>(null);
+  const toggleFullscreen = () => { const el = playerWrapRef.current; if (!el) return; if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen?.(); };
+
+  // ── Save / Load project (.json) ──
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  const saveProject = () => {
+    const data = JSON.stringify({ v: 1, state: stateRef.current, bin }, null, 2);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+    a.download = 'flimify-project.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('Project saved.');
+  };
+  const loadProjectFile = async (file: File) => {
+    try {
+      const j = JSON.parse(await file.text());
+      if (j && j.state && Array.isArray(j.state.tracks)) { checkpoint(); setState(j.state); if (Array.isArray(j.bin)) setBin(j.bin); setSelectedId(null); toast('Project loaded.'); }
+      else toast('Not a Flimify project file.', true);
+    } catch (e) { toast('Load failed: ' + (e as Error).message, true); }
+  };
+
   // Editing shortcuts. cmdRef keeps the latest handlers so the listener binds once.
-  const cmdRef = useRef({ undo, redo, splitAtPlayhead, nudgeSelected, duplicateSelected, deleteSelected });
-  cmdRef.current = { undo, redo, splitAtPlayhead, nudgeSelected, duplicateSelected, deleteSelected };
+  const cmd = { undo, redo, splitAtPlayhead, nudgeSelected, duplicateSelected, deleteSelected, rippleDelete, copySelected, cutSelected, pasteClip, addMarker, clearMarkers, stepFrame, jumpEdit, seekTo, saveProject };
+  const cmdRef = useRef(cmd); cmdRef.current = cmd;
   useEffect(() => {
     const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       const c = cmdRef.current;
-      // ⌘/Ctrl shortcuts work even with a field focused EXCEPT undo/redo in inputs
+      // ⌘/Ctrl combos
       if (meta && (e.key === 'z' || e.key === 'Z')) { if (typing()) return; e.preventDefault(); e.shiftKey ? c.redo() : c.undo(); return; }
       if (meta && (e.key === 'y' || e.key === 'Y')) { if (typing()) return; e.preventDefault(); c.redo(); return; }
       if (meta && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); c.duplicateSelected(); return; }
+      if (meta && (e.key === 'c' || e.key === 'C')) { if (typing()) return; e.preventDefault(); c.copySelected(); return; }
+      if (meta && (e.key === 'x' || e.key === 'X')) { if (typing()) return; e.preventDefault(); c.cutSelected(); return; }
+      if (meta && (e.key === 'v' || e.key === 'V')) { if (typing()) return; e.preventDefault(); c.pasteClip(); return; }
+      if (meta && (e.key === 's' || e.key === 'S')) { e.preventDefault(); c.saveProject(); return; }
       if (typing()) return;
+      if (e.key === '?') { e.preventDefault(); setShowShortcuts((v) => !v); return; }
       if (e.key === 's' || e.key === 'S') { e.preventDefault(); c.splitAtPlayhead(); return; }
-      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); c.deleteSelected(); return; }
+      if (e.key === 'm' || e.key === 'M') { e.preventDefault(); e.shiftKey ? c.clearMarkers() : c.addMarker(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.shiftKey ? c.rippleDelete() : c.deleteSelected(); return; }
       if (e.key === ' ') { e.preventDefault(); playerRef.current?.toggle(); return; }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); c.nudgeSelected(-1, e.shiftKey); return; }
-      if (e.key === 'ArrowRight') { e.preventDefault(); c.nudgeSelected(1, e.shiftKey); return; }
+      if (e.key === 'Home') { e.preventDefault(); c.seekTo(0); return; }
+      if (e.key === 'End') { e.preventDefault(); c.seekTo(stateRef.current.durationInFrames); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); c.jumpEdit(-1); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); c.jumpEdit(1); return; }
+      // ←/→: nudge the selected clip, or step the playhead when nothing is selected
+      if (e.key === 'ArrowLeft') { e.preventDefault(); selectedIdRef.current ? c.nudgeSelected(-1, e.shiftKey) : c.stepFrame(-1, e.shiftKey); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); selectedIdRef.current ? c.nudgeSelected(1, e.shiftKey) : c.stepFrame(1, e.shiftKey); return; }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // ── Autosave the timeline to localStorage; restore once on first mount ──
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return; restoredRef.current = true;
+    try {
+      const raw = localStorage.getItem('flimify.autosave');
+      if (raw) { const j = JSON.parse(raw); if (j && j.state && Array.isArray(j.state.tracks) && j.state.tracks.some((t: Track) => t.clips.length)) { setState(j.state); if (Array.isArray(j.bin)) setBin(j.bin); } }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    const id = setTimeout(() => { try { localStorage.setItem('flimify.autosave', JSON.stringify({ v: 1, state, bin })); } catch { /* quota */ } }, 800);
+    return () => clearTimeout(id);
+  }, [state, bin]);
 
   // ── import footage (shared by the button, menu, and drag-drop) ──
   // land a freshly-imported/uploaded clip onto the bin + the base video track,
@@ -521,6 +640,10 @@ export default function App() {
   };
 
   // ── add / remove timeline tracks (right-click on a track header) ──
+  // toggle a per-track flag (mute / solo / lock)
+  const toggleTrackFlag = (trackId: string, flag: 'muted' | 'solo' | 'locked') => {
+    setState((s) => ({ ...s, tracks: s.tracks.map((t) => (t.id === trackId ? { ...t, [flag]: !t[flag] } : t)) }));
+  };
   const addTrack = (type: TrackType) => {
     setState((s) => {
       if (s.tracks.length >= MAX_TRACKS) return s;
@@ -576,14 +699,15 @@ export default function App() {
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (settingsOpen) { e.preventDefault(); setSettingsOpen(false); }
+      if (showShortcuts) { e.preventDefault(); setShowShortcuts(false); }
+      else if (settingsOpen) { e.preventDefault(); setSettingsOpen(false); }
       else if (historyOpen) { e.preventDefault(); setHistoryOpen(false); }
       else if (captionsOpen) { e.preventDefault(); setCaptionsOpen(false); }
       else if (autoEditOpen) { e.preventDefault(); setAutoEditOpen(false); }
     };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
-  }, [settingsOpen, historyOpen, captionsOpen, autoEditOpen]);
+  }, [showShortcuts, settingsOpen, historyOpen, captionsOpen, autoEditOpen]);
   const footageClip = () => state.tracks.filter((t) => t.type === 'video').flatMap((t) => t.clips).find((c) => c.kind === 'video');
   const openAutoEdit = () => {
     if (!footageClip()) { toast('Import footage first — Auto-Edit reads its speech.', true); return; }
@@ -674,6 +798,7 @@ export default function App() {
       <div className="aurora" aria-hidden />
       <canvas id="particleCanvas" aria-hidden />
       <input ref={fileInputRef} type="file" accept="video/*" multiple hidden onChange={onFilePicked} />
+      <input ref={projectInputRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) loadProjectFile(f); e.target.value = ''; }} />
       {booting && (
         <div className="boot-intro" onClick={() => setBooting(false)}>
           <div className="boot-mark">F</div>
@@ -719,6 +844,8 @@ export default function App() {
           >
             {captioning && features.captions ? 'Captioning…' : 'Captions'}{!features.captions && <LockBadge />}
           </button>
+          <button className="btn icon" title="Save project to a file (⌘S)" aria-label="Save project" onClick={saveProject}>⤓</button>
+          <button className="btn icon" title="Open a saved project" aria-label="Open project" onClick={() => projectInputRef.current?.click()}>⤒</button>
           <button className="btn" onClick={onExport} disabled={!hasClips || exporting}>
             {exporting ? 'Exporting…' : 'Export'}
           </button>
@@ -754,7 +881,7 @@ export default function App() {
             </>
           ) : (
             <div className="fx-scroll">
-              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} onAudio={updateSelectedAudio} />
+              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} onAudio={updateSelectedAudio} onFade={updateSelectedFade} />
             </div>
           )}
         </aside>
@@ -762,19 +889,23 @@ export default function App() {
         <div className="splitter-v" onMouseDown={(e) => onSplitterDown(e, 'left')} onDoubleClick={resetLayout} title="Drag to resize · double-click to reset" />
 
         <main className="stage">
-          <div className="player-wrap">
+          <div className="player-wrap" ref={playerWrapRef}>
             {hasClips ? (
-              <Player
-                ref={playerRef}
-                component={TimelineComposition}
-                inputProps={playerInputProps}
-                durationInFrames={state.durationInFrames}
-                fps={state.fps}
-                compositionWidth={state.width}
-                compositionHeight={state.height}
-                style={{ width: '100%', height: '100%' }}
-                acknowledgeRemotionLicense
-              />
+              <>
+                <Player
+                  ref={playerRef}
+                  component={TimelineComposition}
+                  inputProps={playerInputProps}
+                  durationInFrames={state.durationInFrames}
+                  fps={state.fps}
+                  compositionWidth={state.width}
+                  compositionHeight={state.height}
+                  loop={loop}
+                  style={{ width: '100%', height: '100%' }}
+                  acknowledgeRemotionLicense
+                />
+                {grid && <div className="preview-grid" aria-hidden />}
+              </>
             ) : (
               <div className="stage-empty">
                 <p>Import a video or generate a graphic to begin.</p>
@@ -785,6 +916,18 @@ export default function App() {
             <button className="btn play" onClick={() => playerRef.current?.toggle()} disabled={!hasClips}>{playing ? '❚❚' : '►'}</button>
             <span className="tc">{fmt(frame, state.fps)}</span>
             <span className="tc dim">/ {fmt(state.durationInFrames, state.fps)}</span>
+            <div className="transport-tools">
+              <button className={'tbtn' + (loop ? ' on' : '')} title="Loop playback" onClick={() => setLoop((v) => !v)}>↻</button>
+              <button className={'tbtn' + (grid ? ' on' : '')} title="Grid + safe margins" onClick={() => setGrid((v) => !v)}>#</button>
+              <button className="tbtn" title="Fullscreen preview" onClick={toggleFullscreen}>⛶</button>
+              <span className="aspect-presets" title="Composition aspect ratio">
+                <button onClick={() => setAspectDims(1920, 1080)}>16:9</button>
+                <button onClick={() => setAspectDims(1080, 1920)}>9:16</button>
+                <button onClick={() => setAspectDims(1080, 1080)}>1:1</button>
+                <button onClick={() => setAspectDims(1080, 1350)}>4:5</button>
+              </span>
+              <button className="tbtn" title="Keyboard shortcuts (?)" onClick={() => setShowShortcuts(true)}>⌨</button>
+            </div>
           </div>
         </main>
 
@@ -825,6 +968,10 @@ export default function App() {
         onRedo={redo}
         canUndo={past.length > 0}
         canRedo={future.length > 0}
+        snapEnabled={snapEnabled}
+        onToggleSnap={() => setSnapEnabled((v) => !v)}
+        markers={state.markers || []}
+        onToggleTrackFlag={toggleTrackFlag}
       />
 
       {settingsOpen && (
@@ -836,6 +983,24 @@ export default function App() {
           onReset={() => setSettings({ ...SETTINGS_DEFAULTS })}
           features={features}
         />
+      )}
+      {showShortcuts && (
+        <div className="shortcuts-scrim" onClick={() => setShowShortcuts(false)}>
+          <div className="shortcuts-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="shortcuts-h">Keyboard shortcuts<button className="shortcuts-close" aria-label="Close" onClick={() => setShowShortcuts(false)}>✕</button></div>
+            <div className="shortcuts-grid">
+              {[
+                ['Space', 'Play / pause'], ['← →', 'Nudge clip 1 frame · ⇧ = 1 s'], ['← →', 'Step playhead (no selection)'],
+                ['↑ ↓', 'Jump to prev / next edit point'], ['Home / End', 'Go to start / end'],
+                ['S', 'Split at playhead'], ['Delete', 'Delete clip'], ['⇧Delete', 'Ripple delete (close gap)'],
+                ['⌘C / ⌘X / ⌘V', 'Copy / cut / paste clip'], ['⌘D', 'Duplicate clip'], ['⌘Z / ⇧⌘Z', 'Undo / redo'],
+                ['M / ⇧M', 'Add marker / clear markers'], ['F', 'Zoom to selection (Fit if none)'],
+                ['Alt + scroll', 'Zoom timeline'], ['⇧ + scroll', 'Pan timeline'], ['⌘ (while dragging)', 'Bypass snapping'],
+                ['⌘S', 'Save project'], ['?', 'This help'],
+              ].map(([k, d], i) => (<div className="shortcut-row" key={i}><kbd>{k}</kbd><span>{d}</span></div>))}
+            </div>
+          </div>
+        </div>
       )}
       {historyOpen && (
         <HistoryPanel

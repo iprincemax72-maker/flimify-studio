@@ -7,7 +7,7 @@
 // (anchored at the cursor) — or use the −/Fit/+ buttons. "Fit" scales the whole
 // video to the visible width, so a long clip is never cut off past the edge.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Clip, EditorState, Track, TrackType } from './types';
+import type { Clip, EditorState, Marker, Track, TrackType } from './types';
 import { MAX_TRACKS } from './types';
 
 const DEFAULT_PX_PER_FRAME = 5;
@@ -30,6 +30,7 @@ type Drag = {
   trackId: string; clipId: string; mode: 'move' | 'trim-left' | 'trim-right';
   startX: number; startFrom: number; startDur: number; startTrim: number | null;
   snaps: number[]; // frames to snap edges to (playhead, 0, other clips' edges)
+  snap: boolean;   // snapping on for this drag (the toggle, at mousedown)
 };
 
 const SNAP_PX = 7; // snap when an edge is within this many screen px of a target
@@ -53,7 +54,11 @@ export const TimelineStrip: React.FC<{
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
-}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink, onDropMedia, onBeginEdit, onSplit, onUndo, onRedo, canUndo, canRedo }) => {
+  snapEnabled?: boolean;
+  onToggleSnap?: () => void;
+  markers?: Marker[];
+  onToggleTrackFlag?: (trackId: string, flag: 'muted' | 'solo' | 'locked') => void;
+}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink, onDropMedia, onBeginEdit, onSplit, onUndo, onRedo, canUndo, canRedo, snapEnabled = true, onToggleSnap, markers = [], onToggleTrackFlag }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [dropTrack, setDropTrack] = useState<string | null>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -143,6 +148,27 @@ export const TimelineStrip: React.FC<{
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
+  // F → zoom to the selected clip (or Fit all if nothing's selected)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'f' && e.key !== 'F') || e.metaKey || e.ctrlKey) return;
+      if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) return;
+      e.preventDefault();
+      const el = wrapRef.current; if (!el) return;
+      let sel: { from: number; dur: number } | null = null;
+      for (const t of state.tracks) for (const c of t.clips) if (c.id === selectedId) sel = { from: c.from, dur: c.durationInFrames };
+      if (sel && sel.dur > 0) {
+        const px = clampPx((el.clientWidth - LABEL_W - 48) / sel.dur);
+        pendingAnchor.current = null;
+        setPxPerFrame(px);
+        const at = sel;
+        requestAnimationFrame(() => { if (wrapRef.current) wrapRef.current.scrollLeft = Math.max(0, at.from * px - 24); });
+      } else { fitAll(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedId, state]);
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const d = dragRef.current;
@@ -150,7 +176,7 @@ export const TimelineStrip: React.FC<{
       const dxFrames = Math.round((e.clientX - d.startX) / pxRef.current);
       // snap an edge to the nearest target within SNAP_PX (hold ⌘/Ctrl to bypass)
       const snapEdge = (edge: number): number | null => {
-        if (e.metaKey || e.ctrlKey) return null;
+        if (e.metaKey || e.ctrlKey || !d.snap) return null;
         const thr = SNAP_PX / pxRef.current;
         let best: number | null = null, bestDist = thr;
         for (const t of d.snaps) { const dist = Math.abs(edge - t); if (dist <= bestDist) { best = t; bestDist = dist; } }
@@ -214,6 +240,7 @@ export const TimelineStrip: React.FC<{
 
   const onClipDown = (e: React.MouseEvent, trackId: string, clip: Clip) => {
     e.stopPropagation();
+    if (state.tracks.find((t) => t.id === trackId)?.locked) { onSelect(clip.id); return; } // locked track → select only, no drag
     onSelect(clip.id);
     onBeginEdit?.();   // one undo checkpoint per drag (not per mousemove frame)
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -226,7 +253,7 @@ export const TimelineStrip: React.FC<{
       trackId, clipId: clip.id, mode, startX: e.clientX,
       startFrom: clip.from, startDur: clip.durationInFrames,
       startTrim: (clip.kind === 'video' || clip.kind === 'audio') ? (clip.trimBefore || 0) : null,
-      snaps,
+      snaps, snap: snapEnabled,
     };
     document.body.style.cursor = mode === 'move' ? 'grabbing' : 'ew-resize';
   };
@@ -258,6 +285,7 @@ export const TimelineStrip: React.FC<{
           <button title="Undo (⌘Z)" disabled={!canUndo} onClick={() => onUndo?.()}>↩</button>
           <button title="Redo (⇧⌘Z)" disabled={!canRedo} onClick={() => onRedo?.()}>↪</button>
           <button className="tl-edit-split" title="Split at playhead (S)" onClick={() => onSplit?.()}>✂ Split</button>
+          {onToggleSnap && <button className={'tl-edit-snap' + (snapEnabled ? ' on' : '')} title={snapEnabled ? 'Snapping ON — clips snap to edges/playhead (hold ⌘ to bypass)' : 'Snapping OFF'} onClick={() => onToggleSnap()}>🧲</button>}
         </div>
       )}
       <div className="tl-zoom" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
@@ -274,6 +302,15 @@ export const TimelineStrip: React.FC<{
                 <span>{fmtSec(Math.round(f / state.fps))}</span>
               </div>
             ))}
+            {markers.map((m) => (
+              <div
+                key={m.id}
+                className="tl-marker"
+                style={{ left: LABEL_W + m.frame * pxPerFrame }}
+                title={'Marker @ ' + fmtSec(Math.round(m.frame / state.fps)) + ' — click to jump'}
+                onMouseDown={(e) => { e.stopPropagation(); onSeek(m.frame); }}
+              />
+            ))}
           </div>
 
           {ordered.map((track, i) => {
@@ -281,7 +318,7 @@ export const TimelineStrip: React.FC<{
             const divider = prev && prev.type === 'video' && track.type === 'audio';
             return (
               <div
-                className={'tl-track ' + track.type + (divider ? ' tl-divider' : '') + (dropTrack === track.id ? ' drop-target' : '')}
+                className={'tl-track ' + track.type + (divider ? ' tl-divider' : '') + (dropTrack === track.id ? ' drop-target' : '') + (track.muted ? ' tl-muted' : '') + (track.solo ? ' tl-solo' : '') + (track.locked ? ' tl-locked' : '')}
                 key={track.id}
                 style={{ height: TRACK_H }}
                 onDragOver={onDropMedia ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (dropTrack !== track.id) setDropTrack(track.id); } : undefined}
@@ -339,14 +376,25 @@ export const TimelineStrip: React.FC<{
             ) : (
               <div className="tl-menu-note">This clip has no linked audio/video</div>
             )
-          ) : (
-            <>
-              <button disabled={atMax} onClick={() => { onAddTrack('video'); setMenu(null); }}>Add video track</button>
-              <button disabled={atMax} onClick={() => { onAddTrack('audio'); setMenu(null); }}>Add audio track</button>
-              <button className="danger" disabled={state.tracks.length <= 1} onClick={() => { onDeleteTrack(menu.trackId!); setMenu(null); }}>Delete this track</button>
-              {atMax && <div className="tl-menu-note">Max {MAX_TRACKS} tracks</div>}
-            </>
-          )}
+          ) : (() => {
+            const tk = state.tracks.find((t) => t.id === menu.trackId);
+            return (
+              <>
+                {tk && onToggleTrackFlag && (
+                  <>
+                    <button onClick={() => { onToggleTrackFlag(tk.id, 'muted'); setMenu(null); }}>{tk.muted ? '🔊 Unmute track' : '🔇 Mute track'}</button>
+                    <button onClick={() => { onToggleTrackFlag(tk.id, 'solo'); setMenu(null); }}>{tk.solo ? '◉ Unsolo track' : '◎ Solo track'}</button>
+                    <button onClick={() => { onToggleTrackFlag(tk.id, 'locked'); setMenu(null); }}>{tk.locked ? '🔓 Unlock track' : '🔒 Lock track'}</button>
+                    <div className="tl-menu-sep" />
+                  </>
+                )}
+                <button disabled={atMax} onClick={() => { onAddTrack('video'); setMenu(null); }}>Add video track</button>
+                <button disabled={atMax} onClick={() => { onAddTrack('audio'); setMenu(null); }}>Add audio track</button>
+                <button className="danger" disabled={state.tracks.length <= 1} onClick={() => { onDeleteTrack(menu.trackId!); setMenu(null); }}>Delete this track</button>
+                {atMax && <div className="tl-menu-note">Max {MAX_TRACKS} tracks</div>}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

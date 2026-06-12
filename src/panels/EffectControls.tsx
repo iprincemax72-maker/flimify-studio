@@ -60,11 +60,24 @@ const Row: React.FC<{ label: string; onReset: () => void; children: React.ReactN
   </div>
 );
 
+const FadeGroup: React.FC<{ clip: Clip; onFade: (p: { fadeIn?: number; fadeOut?: number }) => void }> = ({ clip, onFade }) => (
+  <div className="fx-group">
+    <div className="fx-group-h">Fade (frames)</div>
+    <Row label="In" onReset={() => onFade({ fadeIn: 0 })}>
+      <ScrubNumber value={clip.fadeIn ?? 0} onChange={(f) => onFade({ fadeIn: Math.max(0, f) })} step={1} min={0} max={600} dp={0} suffix=" f" />
+    </Row>
+    <Row label="Out" onReset={() => onFade({ fadeOut: 0 })}>
+      <ScrubNumber value={clip.fadeOut ?? 0} onChange={(f) => onFade({ fadeOut: Math.max(0, f) })} step={1} min={0} max={600} dp={0} suffix=" f" />
+    </Row>
+  </div>
+);
+
 export const EffectControls: React.FC<{
   clip: Clip | null;
   onChange: (patch: Partial<ClipTransform>) => void;
   onAudio: (gainDb: number) => void;
-}> = ({ clip, onChange, onAudio }) => {
+  onFade: (patch: { fadeIn?: number; fadeOut?: number }) => void;
+}> = ({ clip, onChange, onAudio, onFade }) => {
   if (!clip) {
     return <div className="fx-empty">Select a clip on the timeline to edit it.</div>;
   }
@@ -79,6 +92,7 @@ export const EffectControls: React.FC<{
             <ScrubNumber value={db} onChange={onAudio} step={0.2} min={-60} max={12} dp={1} suffix=" dB" />
           </Row>
         </div>
+        <FadeGroup clip={clip} onFade={onFade} />
       </div>
     );
   }
@@ -107,6 +121,8 @@ export const EffectControls: React.FC<{
           <ScrubNumber value={t.opacity} onChange={(opacity) => onChange({ opacity })} step={0.5} min={0} max={100} dp={1} suffix=" %" />
         </Row>
       </div>
+
+      <FadeGroup clip={clip} onFade={onFade} />
     </div>
   );
 };

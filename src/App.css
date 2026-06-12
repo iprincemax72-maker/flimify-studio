@@ -474,6 +474,49 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .tl-edit button:hover:not(:disabled) { background: rgba(255,255,255,.08); }
 .tl-edit button:disabled { opacity: .35; cursor: default; }
 .tl-edit .tl-edit-split { font-size: 11px; font-weight: 600; color: rgb(var(--accent-rgb)); }
+.tl-edit .tl-edit-snap { font-size: 14px; }
+.tl-edit .tl-edit-snap.on { color: rgb(var(--accent-rgb)); background: rgba(var(--accent-rgb), .16); }
+
+/* timeline markers (on the ruler) */
+.tl-marker { position: absolute; top: 0; height: 100%; width: 2px; background: #f2b138; cursor: pointer; z-index: 5; }
+.tl-marker::before { content: ''; position: absolute; top: 0; left: -4px; border: 5px solid transparent; border-top-color: #f2b138; border-top-width: 7px; }
+.tl-marker:hover { background: #ffcf6b; }
+
+/* per-track state cues */
+.tl-track.tl-muted { opacity: .42; }
+.tl-track.tl-solo { box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .4); }
+.tl-track.tl-locked { background-image: repeating-linear-gradient(45deg, transparent, transparent 7px, rgba(255,255,255,.025) 7px, rgba(255,255,255,.025) 14px); }
+.tl-track.tl-locked .tl-clip { pointer-events: none; }
+.tl-menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+
+/* transport tools (loop / grid / fullscreen / aspect / shortcuts) */
+.transport-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.transport-tools .tbtn { height: 24px; min-width: 26px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.03); color: var(--text); cursor: pointer; font-size: 13px; line-height: 1; }
+.transport-tools .tbtn:hover { border-color: var(--border-strong); }
+.transport-tools .tbtn.on { color: rgb(var(--accent-rgb)); border-color: var(--accent-line); background: rgba(var(--accent-rgb),.14); }
+.aspect-presets { display: inline-flex; gap: 2px; margin: 0 4px; }
+.aspect-presets button { height: 24px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.03); color: var(--dim); cursor: pointer; font-size: 10.5px; font-weight: 600; }
+.aspect-presets button:hover { color: var(--text); border-color: var(--accent-line); }
+
+/* preview grid + title-safe margins overlay */
+.preview-grid { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.preview-grid::before { content: ''; position: absolute; inset: 5%; border: 1px solid rgba(255,255,255,.32); }
+.preview-grid::after { content: ''; position: absolute; inset: 0; background:
+  linear-gradient(to right, transparent calc(33.33% - .5px), rgba(255,255,255,.16) calc(33.33% - .5px), rgba(255,255,255,.16) calc(33.33% + .5px), transparent calc(33.33% + .5px)),
+  linear-gradient(to right, transparent calc(66.66% - .5px), rgba(255,255,255,.16) calc(66.66% - .5px), rgba(255,255,255,.16) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+  linear-gradient(to bottom, transparent calc(33.33% - .5px), rgba(255,255,255,.16) calc(33.33% - .5px), rgba(255,255,255,.16) calc(33.33% + .5px), transparent calc(33.33% + .5px)),
+  linear-gradient(to bottom, transparent calc(66.66% - .5px), rgba(255,255,255,.16) calc(66.66% - .5px), rgba(255,255,255,.16) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
+
+/* keyboard shortcuts modal */
+.shortcuts-scrim { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.5); display: grid; place-items: center; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.shortcuts-modal { width: min(580px, 92vw); max-height: 80vh; overflow: auto; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: 0 24px 60px -16px rgba(0,0,0,.7); }
+.shortcuts-h { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; font-weight: 700; font-size: 15px; border-bottom: 1px solid var(--line); }
+.shortcuts-close { border: none; background: transparent; color: var(--dim); font-size: 15px; cursor: pointer; }
+.shortcuts-grid { padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 18px; }
+.shortcut-row { display: flex; align-items: center; gap: 10px; padding: 5px 4px; font-size: 12.5px; }
+.shortcut-row kbd { flex: 0 0 auto; min-width: 92px; text-align: center; font: inherit; font-size: 11px; padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,.06); border: 1px solid var(--line); color: var(--text); }
+.shortcut-row span { color: var(--dim); }
+@media (max-width: 620px) { .shortcuts-grid { grid-template-columns: 1fr; } }
 
 .tl-zoom {
   position: absolute; top: 6px; right: 12px; z-index: 40;
