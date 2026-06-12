@@ -83,6 +83,29 @@ export default function App() {
   const [leftTab, setLeftTab] = useState<'media' | 'fx'>('media');
   const playerRef = useRef<PlayerRef>(null);
 
+  // ── Undo / Redo ──────────────────────────────────────────────────────────
+  // Snapshot the EDITOR state (tracks) before each edit. Refs keep the handlers
+  // current without re-subscribing. Drags push ONE checkpoint at mousedown.
+  const stateRef = useRef(state); stateRef.current = state;
+  const [past, setPast] = useState<EditorState[]>([]);
+  const [future, setFuture] = useState<EditorState[]>([]);
+  const checkpoint = () => { setPast((p) => [...p, stateRef.current].slice(-100)); setFuture([]); };
+  const undo = () => setPast((p) => {
+    if (!p.length) return p;
+    setFuture((f) => [stateRef.current, ...f].slice(0, 100));
+    setState(p[p.length - 1]); setSelectedId(null);
+    return p.slice(0, -1);
+  });
+  const redo = () => setFuture((f) => {
+    if (!f.length) return f;
+    setPast((p) => [...p, stateRef.current].slice(-100));
+    setState(f[0]); setSelectedId(null);
+    return f.slice(1);
+  });
+
+  const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
+  const frameRef = useRef(frame); frameRef.current = frame;
+
   // the selected clip + which track it's on (for Effect Controls)
   const selected = useMemo(() => {
     if (!selectedId) return null;
@@ -206,6 +229,7 @@ export default function App() {
   const playerInputProps = useMemo(() => ({ state }), [state]);
 
   const addClip = (trackId: string, clip: Clip) => {
+    checkpoint();
     setState((s) => {
       const tracks = s.tracks.map((t) => (t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t));
       return { ...s, tracks, durationInFrames: recomputeDuration(tracks) };
@@ -253,6 +277,7 @@ export default function App() {
 
   const deleteSelected = () => {
     if (!selectedId) return;
+    checkpoint();
     setState((s) => {
       // also remove a linked partner (footage video ↔ its split audio) unless unlinked
       let linkId: string | undefined;
@@ -266,18 +291,84 @@ export default function App() {
     setSelectedId(null);
   };
 
-  // keyboard: Delete/Backspace removes the selected clip; Space toggles play.
+  // ── Split at playhead (S / razor) — cut every clip the playhead passes through ──
+  const splitAtPlayhead = () => {
+    const f = Math.round(frameRef.current);
+    const cur = stateRef.current;
+    const willSplit = cur.tracks.some((t) => t.clips.some((c) => f > c.from && f < c.from + c.durationInFrames));
+    if (!willSplit) return;           // nothing under the playhead — no-op, no undo step
+    checkpoint();
+    setState((s) => {
+      const tracks = s.tracks.map((t) => {
+        const clips: Clip[] = [];
+        for (const c of t.clips) {
+          if (f > c.from && f < c.from + c.durationInFrames) {
+            const leftDur = f - c.from;
+            const left = { ...c, durationInFrames: leftDur, linkId: undefined } as Clip;
+            const trim = (c as { trimBefore?: number }).trimBefore;
+            const right = {
+              ...c, id: c.id + '_s' + f.toString(36), from: f,
+              durationInFrames: c.durationInFrames - leftDur, linkId: undefined,
+              ...(typeof trim === 'number' ? { trimBefore: trim + leftDur } : {}),
+            } as Clip;
+            clips.push(left, right);
+          } else clips.push(c);
+        }
+        return { ...t, clips };
+      });
+      return { ...s, tracks };
+    });
+  };
+
+  // ── Nudge the selected clip: ←/→ by 1 frame, Shift+←/→ by 1 second ──
+  const nudgeSelected = (dir: number, big: boolean) => {
+    const id = selectedIdRef.current; if (!id) return;
+    const s = stateRef.current;
+    let trackId: string | undefined, from = 0;
+    for (const t of s.tracks) for (const c of t.clips) if (c.id === id) { trackId = t.id; from = c.from; }
+    if (!trackId) return;
+    checkpoint();
+    updateClip(trackId, id, { from: Math.max(0, from + dir * (big ? s.fps : 1)) });
+  };
+
+  // ── Duplicate the selected clip (Cmd/Ctrl+D) — drop a copy right after it ──
+  const duplicateSelected = () => {
+    const id = selectedIdRef.current; if (!id) return;
+    const s = stateRef.current;
+    let trackId: string | undefined, clip: Clip | undefined;
+    for (const t of s.tracks) for (const c of t.clips) if (c.id === id) { trackId = t.id; clip = c; }
+    if (!trackId || !clip) return;
+    checkpoint();
+    const dup = { ...clip, id: clip.id + '_dup' + Date.now().toString(36), from: clip.from + clip.durationInFrames, linkId: undefined } as Clip;
+    setState((st) => {
+      const tracks = st.tracks.map((t) => (t.id === trackId ? { ...t, clips: [...t.clips, dup] } : t));
+      return { ...st, tracks, durationInFrames: recomputeDuration(tracks) };
+    });
+    setSelectedId(dup.id);
+  };
+
+  // Editing shortcuts. cmdRef keeps the latest handlers so the listener binds once.
+  const cmdRef = useRef({ undo, redo, splitAtPlayhead, nudgeSelected, duplicateSelected, deleteSelected });
+  cmdRef.current = { undo, redo, splitAtPlayhead, nudgeSelected, duplicateSelected, deleteSelected };
   useEffect(() => {
-    const editable = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
+    const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
     const onKey = (e: KeyboardEvent) => {
-      if (editable()) return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); deleteSelected(); }
-      else if (e.key === ' ') { e.preventDefault(); playerRef.current?.toggle(); }
+      const meta = e.metaKey || e.ctrlKey;
+      const c = cmdRef.current;
+      // ⌘/Ctrl shortcuts work even with a field focused EXCEPT undo/redo in inputs
+      if (meta && (e.key === 'z' || e.key === 'Z')) { if (typing()) return; e.preventDefault(); e.shiftKey ? c.redo() : c.undo(); return; }
+      if (meta && (e.key === 'y' || e.key === 'Y')) { if (typing()) return; e.preventDefault(); c.redo(); return; }
+      if (meta && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); c.duplicateSelected(); return; }
+      if (typing()) return;
+      if (e.key === 's' || e.key === 'S') { e.preventDefault(); c.splitAtPlayhead(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); c.deleteSelected(); return; }
+      if (e.key === ' ') { e.preventDefault(); playerRef.current?.toggle(); return; }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); c.nudgeSelected(-1, e.shiftKey); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); c.nudgeSelected(1, e.shiftKey); return; }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, []);
 
   // ── import footage (shared by the button, menu, and drag-drop) ──
   // land a freshly-imported/uploaded clip onto the bin + the base video track,
@@ -304,6 +395,7 @@ export default function App() {
   // UNIQUE clip id (+ unique link id) — re-drops never collide on React keys.
   const draggedMediaRef = useRef<BridgeClip | null>(null);
   const placeMediaOnTimeline = (clip: BridgeClip, targetTrackId: string | null, frame: number) => {
+    checkpoint();
     setState((s) => {
       const at = Math.max(0, Math.round(frame));
       const target = targetTrackId ? s.tracks.find((t) => t.id === targetTrackId) : null;
@@ -727,6 +819,12 @@ export default function App() {
         onDeleteTrack={deleteTrack}
         onToggleLink={toggleLink}
         onDropMedia={onDropMedia}
+        onBeginEdit={checkpoint}
+        onSplit={splitAtPlayhead}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={past.length > 0}
+        canRedo={future.length > 0}
       />
 
       {settingsOpen && (

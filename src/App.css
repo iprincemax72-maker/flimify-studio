@@ -457,6 +457,24 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
    enough tracks to overflow. */
 /* wrapper holds the scrolling timeline + a pinned zoom toolbar (stays put while the strip scrolls) */
 .tl-wrap { position: relative; min-height: 0; min-width: 0; height: 100%; }
+/* edit toolbar (undo / redo / split) — mirrors the zoom toolbar on the left */
+.tl-edit {
+  position: absolute; top: 6px; left: 12px; z-index: 40;
+  display: flex; align-items: center; gap: 3px; padding: 3px;
+  border-radius: 9px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px -10px rgba(0,0,0,.65);
+}
+.tl-edit button {
+  min-width: 26px; height: 23px; padding: 0 8px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text); cursor: pointer;
+  font: inherit; font-size: 13px; line-height: 1;
+}
+.tl-edit button:hover:not(:disabled) { background: rgba(255,255,255,.08); }
+.tl-edit button:disabled { opacity: .35; cursor: default; }
+.tl-edit .tl-edit-split { font-size: 11px; font-weight: 600; color: rgb(var(--accent-rgb)); }
+
 .tl-zoom {
   position: absolute; top: 6px; right: 12px; z-index: 40;
   display: flex; align-items: center; gap: 3px; padding: 3px;

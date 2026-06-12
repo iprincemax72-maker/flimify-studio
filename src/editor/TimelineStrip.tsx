@@ -29,7 +29,10 @@ type Patch = Partial<Pick<Clip, 'from' | 'durationInFrames'>> & { trimBefore?: n
 type Drag = {
   trackId: string; clipId: string; mode: 'move' | 'trim-left' | 'trim-right';
   startX: number; startFrom: number; startDur: number; startTrim: number | null;
+  snaps: number[]; // frames to snap edges to (playhead, 0, other clips' edges)
 };
+
+const SNAP_PX = 7; // snap when an edge is within this many screen px of a target
 
 type Menu = { x: number; y: number; trackId?: string; clip?: Clip } | null;
 
@@ -44,7 +47,13 @@ export const TimelineStrip: React.FC<{
   onDeleteTrack: (trackId: string) => void;
   onToggleLink: (clipId: string) => void;
   onDropMedia?: (trackId: string, frame: number) => void;
-}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink, onDropMedia }) => {
+  onBeginEdit?: () => void;
+  onSplit?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+}> = ({ state, currentFrame, onSeek, selectedId, onSelect, onUpdateClip, onAddTrack, onDeleteTrack, onToggleLink, onDropMedia, onBeginEdit, onSplit, onUndo, onRedo, canUndo, canRedo }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [dropTrack, setDropTrack] = useState<string | null>(null);
   const dragRef = useRef<Drag | null>(null);
@@ -139,14 +148,32 @@ export const TimelineStrip: React.FC<{
       const d = dragRef.current;
       if (!d) return;
       const dxFrames = Math.round((e.clientX - d.startX) / pxRef.current);
+      // snap an edge to the nearest target within SNAP_PX (hold ⌘/Ctrl to bypass)
+      const snapEdge = (edge: number): number | null => {
+        if (e.metaKey || e.ctrlKey) return null;
+        const thr = SNAP_PX / pxRef.current;
+        let best: number | null = null, bestDist = thr;
+        for (const t of d.snaps) { const dist = Math.abs(edge - t); if (dist <= bestDist) { best = t; bestDist = dist; } }
+        return best;
+      };
       if (d.mode === 'move') {
-        onUpdateClip(d.trackId, d.clipId, { from: Math.max(0, d.startFrom + dxFrames) });
+        let from = Math.max(0, d.startFrom + dxFrames);
+        const sl = snapEdge(from);                  // left edge
+        const sr = snapEdge(from + d.startDur);     // right edge
+        if (sl != null && (sr == null || Math.abs(sl - from) <= Math.abs(sr - (from + d.startDur)))) from = sl;
+        else if (sr != null) from = Math.max(0, sr - d.startDur);
+        onUpdateClip(d.trackId, d.clipId, { from: Math.round(from) });
       } else if (d.mode === 'trim-right') {
-        onUpdateClip(d.trackId, d.clipId, { durationInFrames: Math.max(5, d.startDur + dxFrames) });
+        let dur = Math.max(5, d.startDur + dxFrames);
+        const sr = snapEdge(d.startFrom + dur);
+        if (sr != null) dur = Math.max(5, sr - d.startFrom);
+        onUpdateClip(d.trackId, d.clipId, { durationInFrames: Math.round(dur) });
       } else {
-        const newFrom = Math.max(0, d.startFrom + dxFrames);
+        let newFrom = Math.max(0, d.startFrom + dxFrames);
+        const sl = snapEdge(newFrom);
+        if (sl != null) newFrom = Math.max(0, sl);
         const delta = newFrom - d.startFrom;
-        const patch: Patch = { from: newFrom, durationInFrames: Math.max(5, d.startDur - delta) };
+        const patch: Patch = { from: Math.round(newFrom), durationInFrames: Math.max(5, d.startDur - delta) };
         if (d.startTrim != null) patch.trimBefore = Math.max(0, d.startTrim + delta);
         onUpdateClip(d.trackId, d.clipId, patch);
       }
@@ -188,13 +215,18 @@ export const TimelineStrip: React.FC<{
   const onClipDown = (e: React.MouseEvent, trackId: string, clip: Clip) => {
     e.stopPropagation();
     onSelect(clip.id);
+    onBeginEdit?.();   // one undo checkpoint per drag (not per mousemove frame)
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const offX = e.clientX - rect.left;
     const mode = offX < EDGE ? 'trim-left' : offX > rect.width - EDGE ? 'trim-right' : 'move';
+    // snap targets: 0, the playhead, and every OTHER clip's two edges
+    const snaps = [0, currentFrame];
+    for (const t of state.tracks) for (const c of t.clips) if (c.id !== clip.id) snaps.push(c.from, c.from + c.durationInFrames);
     dragRef.current = {
       trackId, clipId: clip.id, mode, startX: e.clientX,
       startFrom: clip.from, startDur: clip.durationInFrames,
       startTrim: (clip.kind === 'video' || clip.kind === 'audio') ? (clip.trimBefore || 0) : null,
+      snaps,
     };
     document.body.style.cursor = mode === 'move' ? 'grabbing' : 'ew-resize';
   };
@@ -221,6 +253,13 @@ export const TimelineStrip: React.FC<{
 
   return (
     <div className="tl-wrap">
+      {(onUndo || onSplit) && (
+        <div className="tl-edit" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <button title="Undo (⌘Z)" disabled={!canUndo} onClick={() => onUndo?.()}>↩</button>
+          <button title="Redo (⇧⌘Z)" disabled={!canRedo} onClick={() => onRedo?.()}>↪</button>
+          <button className="tl-edit-split" title="Split at playhead (S)" onClick={() => onSplit?.()}>✂ Split</button>
+        </div>
+      )}
       <div className="tl-zoom" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
         <button title="Zoom out (Alt + scroll)" onClick={() => zoomAtCenter(pxRef.current / 1.4)}>−</button>
         <button className="tl-zoom-fit" title="Fit the whole video in view" onClick={fitAll}>Fit</button>
