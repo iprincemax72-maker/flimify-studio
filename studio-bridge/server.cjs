@@ -1,6 +1,6 @@
 // Flimify Studio — local backend ("studio-bridge"). Electron's main process
-// spawns this. Standalone-app equivalent of the Premiere extension's bridge,
-// minus all Premiere/ExtendScript coupling:
+// spawns this. Standalone-app equivalent of Flimify Studio's bridge,
+// minus all native-host coupling:
 //   • serves imported + generated media to the editor/preview (HTTP range)
 //   • /import   — ffprobe a local video → register + return clip metadata
 //   • /generate — spawn the local `claude` CLI → Remotion/HyperFrames render →
@@ -262,6 +262,35 @@ function serveStatic(res, rel) {
   }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
   fs.createReadStream(file).pipe(res);
+}
+
+// ── desktop installer downloads (landing page → /download/mac|win) ──
+// Serves the newest .dmg / .exe from the downloads folder so the website can
+// offer native installers next to the web editor.
+const DOWNLOADS_DIR = process.env.FLIMIFY_DOWNLOADS_DIR || path.join(__dirname, '..', 'downloads');
+function serveDownload(res, os) {
+  try {
+    const ext = os === 'win' ? '.exe' : '.dmg';
+    const files = fs.existsSync(DOWNLOADS_DIR)
+      ? fs.readdirSync(DOWNLOADS_DIR).filter((f) => f.toLowerCase().endsWith(ext))
+          .map((f) => ({ f, m: fs.statSync(path.join(DOWNLOADS_DIR, f)).mtimeMs })).sort((a, b) => b.m - a.m)
+      : [];
+    if (!files.length) {
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      return res.end('<h2>Installer not available yet</h2><p>The ' + (os === 'win' ? 'Windows' : 'Mac')
+        + ' installer is not in the downloads folder. Build it (<code>npm run dist:' + os + '</code>) and place the '
+        + ext + ' in <code>' + DOWNLOADS_DIR + '</code>.</p>');
+    }
+    const file = path.join(DOWNLOADS_DIR, files[0].f);
+    const stat = fs.statSync(file);
+    res.writeHead(200, {
+      'Content-Type': os === 'win' ? 'application/vnd.microsoft.portable-executable' : 'application/x-apple-diskimage',
+      'Content-Length': stat.size,
+      'Content-Disposition': 'attachment; filename="' + files[0].f.replace(/["\r\n]/g, '') + '"',
+      'Access-Control-Allow-Origin': '*',
+    });
+    fs.createReadStream(file).pipe(res);
+  } catch (e) { res.writeHead(500); res.end(String((e && e.message) || e)); }
 }
 
 // Browser upload (web mode): raw file body + X-Filename header → saved + probed.
@@ -681,7 +710,7 @@ async function autoEditRun({ reqId, density, tone, answers, engine }, onStatus) 
 }
 
 // ── account / auth (REAL Google sign-in via Supabase) ───────────────────────
-// Reuses the same Supabase project as the Premiere extension, so the real Google
+// Reuses the same Supabase project as Flimify Studio, so the real Google
 // account (name + avatar) shows up. If you're already signed into the extension,
 // Studio picks up that session automatically — no re-login.
 const SITE_URL = process.env.FLIMIFY_SITE_URL || 'https://www.flimify.com';
@@ -691,7 +720,7 @@ const SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || 'sb_publishable_k7tsIqZia
 const OWNER_EMAILS = (process.env.OWNER_EMAILS || 'iprincemax72@gmail.com,anshdhakad9@gmail.com')
   .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
 const SESSION_FILE = path.join(STUDIO_DIR, 'session.json');
-// also read the Premiere extension's session — sign in there → signed in here too
+// also read Flimify Studio's session — sign in there → signed in here too
 const SHARED_SESSION_FILES = [path.join(HOME, 'PremiereClaude', 'session.json'), path.join(HOME, '.premiere-claude', 'session.json')];
 // Explicit Studio sign-out marker. When present, we do NOT fall back to the
 // shared extension session (otherwise sign-out would do nothing). Signing in
@@ -749,7 +778,7 @@ function adoptNewSigninIfAny() {
   saveSession(fresh[0]);   // → Studio's own file, clears the marker, updates the cache
   log('signed in (picked account): ' + ((fresh[0].user && fresh[0].user.email) || '?'));
 }
-// Is the Premiere extension's bridge up? Its /connect is the redirect Supabase
+// Is Flimify Studio's bridge up? Its /connect is the redirect Supabase
 // already allow-lists, so we route Studio's Google sign-in through it.
 const EXT_BRIDGE = process.env.FLIMIFY_EXT_BRIDGE || 'http://localhost:3737';
 async function extBridgeUp() {
@@ -785,7 +814,7 @@ async function freshToken() {
   })();
   return _refreshing;
 }
-// ── plan → feature gating (mirrors the Premiere extension) ──────────────────
+// ── plan → feature gating (mirrors Flimify Studio) ──────────────────
 // Auto-Edit is Studio-only; Captions + engine switching are owner-only (early
 // access); versions/prompt are capped per tier. Owners get everything. Studio
 // runs on the user's OWN Claude, so renders stay unlimited — only these premium
@@ -881,11 +910,18 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
   if (req.method === 'GET' && u === '/health') return sendJson(res, 200, { ok: true, name: 'flimify-studio-bridge', renderProject: RENDER_PROJECT, web: fs.existsSync(DIST_DIR) });
-  // ── web mode: host the built editor ──
-  if (req.method === 'GET' && (u === '/' || u === '/app' || u.startsWith('/app/'))) {
-    return serveStatic(res, u === '/' || u === '/app' || u === '/app/' ? 'index.html' : u.replace(/^\/app\//, ''));
+  // ── desktop installer downloads ──
+  if (req.method === 'GET' && /^\/download\/(mac|win)\/?$/.test(u)) {
+    return serveDownload(res, /win/.test(u) ? 'win' : 'mac');
   }
-  if (req.method === 'GET' && /^\/(assets\/|favicon\.|apple-touch-icon|icons\.svg|vite\.svg)/.test(u)) {
+  // ── web mode: landing page at /, the editor at /app ──
+  if (req.method === 'GET' && (u === '/' || u === '/index.html')) {
+    return serveStatic(res, fs.existsSync(path.join(DIST_DIR, 'landing.html')) ? 'landing.html' : 'index.html');
+  }
+  if (req.method === 'GET' && (u === '/app' || u === '/app/' || u.startsWith('/app/'))) {
+    return serveStatic(res, (u === '/app' || u === '/app/') ? 'index.html' : u.replace(/^\/app\//, ''));
+  }
+  if (req.method === 'GET' && /^\/(assets\/|favicon\.|apple-touch-icon|icons\.svg|vite\.svg|landing\.html|launch\.html|screenshot\.png|sample\.mp4)/.test(u)) {
     return serveStatic(res, u.replace(/^\//, ''));
   }
   if (req.method === 'POST' && u === '/upload') return handleUpload(req, res);

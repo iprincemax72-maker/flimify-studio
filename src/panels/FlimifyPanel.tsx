@@ -1,7 +1,7 @@
 // The Flimify AI panel — docked in the editor. Multi-conversation tabs (each its
 // own thread, draft, render mode + engine), an empty-state hero with the
 // suggestion-chip browser, and in-chat render cards with Import / Preview /
-// Changes / Delete — a 1:1 port of the Premiere extension, on the no-API-key
+// Changes / Delete — a 1:1 port of Flimify Studio, on the no-API-key
 // local-Claude model.
 import { useEffect, useRef, useState } from 'react';
 import { generate, cancelGeneration, expandPrompt, planQuestions, onProgress, newReqId, type BridgeClip } from '../api';

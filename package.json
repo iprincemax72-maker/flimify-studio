@@ -2,7 +2,7 @@
   "name": "flimify-studio",
   "private": true,
   "version": "0.1.0",
-  "description": "AI-native video editor — generate, edit, and export without Premiere. Runs on your own Claude.",
+  "description": "Flimify Studio — AI-native video editor. Generate, edit, caption, and export. Runs on your own Claude.",
   "author": "Flimify",
   "type": "module",
   "main": "electron/main.cjs",

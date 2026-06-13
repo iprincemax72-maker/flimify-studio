@@ -3,7 +3,7 @@
 // SAME state renders to mp4 on export. Video tracks stack bottom→top (V1 base,
 // higher V on top); audio tracks (A1, A2…) sit below. Each clip is a <Sequence>.
 
-/** Effect-controls transform applied to a visual clip (Premiere-style). */
+/** Effect-controls transform applied to a visual clip (pro-editor-style). */
 export type ClipTransform = {
   x: number;        // position offset from centre, in composition px
   y: number;

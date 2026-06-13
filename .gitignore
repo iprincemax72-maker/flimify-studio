@@ -25,3 +25,6 @@ dist-ssr
 
 # electron-builder output
 release
+
+# staged desktop installers (served at /download/*, host-placed in prod)
+downloads

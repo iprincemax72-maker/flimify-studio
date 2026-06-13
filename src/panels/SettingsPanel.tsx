@@ -1,4 +1,4 @@
-// Settings panel — same layout/controls as the Premiere extension: Appearance
+// Settings panel — same layout/controls as Flimify Studio: Appearance
 // (theme, accent, particles, boot intro), Behavior (expand, versions),
 // Defaults (engine/aspect/duration/confirm-import), and Data actions. Slides
 // over the editor.

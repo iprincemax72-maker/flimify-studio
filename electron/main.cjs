@@ -159,7 +159,7 @@ function aboutBox() {
     title: 'Flimify Studio',
     message: 'Flimify Studio',
     detail:
-      `An AI-native video editor.\nGenerate motion graphics, auto-edit, and caption — no Premiere needed.\n\n` +
+      `An AI-native video editor.\nGenerate motion graphics, auto-edit, caption, and export — all in one app.\n\n` +
       `Version ${app.getVersion()} · Electron ${process.versions.electron}\nRuns on your own Claude — no API key.`,
     buttons: ['Close', 'flimify.com'],
     defaultId: 0,

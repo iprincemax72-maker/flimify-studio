@@ -1,4 +1,4 @@
-// Effect Controls — Premiere-style transform editor for the selected clip.
+// Effect Controls — pro-editor-style transform editor for the selected clip.
 // Scoped to Position (X/Y), Scale, Rotation, Opacity. Values are scrubbable
 // (drag left/right) and double-click to type. Edits flow straight into the
 // clip's transform, so the preview + export update live.
@@ -18,7 +18,7 @@ const ScrubNumber: React.FC<{
   const lim = (v: number) => { if (min != null) v = Math.max(min, v); if (max != null) v = Math.min(max, v); return v; };
   const clamp = (v: number) => +lim(v).toFixed(dp);
   const commit = () => { const v = parseFloat(draft); if (!isNaN(v)) onChange(clamp(v)); setEditing(false); };
-  // Premiere-style scrub: pointer-lock hides the cursor, then drag up/right to
+  // pro-editor-style scrub: pointer-lock hides the cursor, then drag up/right to
   // raise and down/left to lower — infinitely (no edge limits).
   const onDown = (e: React.MouseEvent) => {
     e.preventDefault();

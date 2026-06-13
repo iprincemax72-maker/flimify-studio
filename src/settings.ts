@@ -1,4 +1,4 @@
-// Settings — ported 1:1 from the Premiere extension (same accent palette, the
+// Settings — ported 1:1 from Flimify Studio (same accent palette, the
 // same theme backgrounds, the same generation defaults), persisted to
 // localStorage and applied live via CSS variables.
 

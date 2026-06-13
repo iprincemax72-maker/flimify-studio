@@ -1,7 +1,6 @@
 // Flimify Studio — the editor shell, fully wired to the studio-bridge:
-// import footage, generate AI overlays (no API key), export to mp4. Premiere-
-// style 4-pane layout; the timeline IS the Remotion composition that previews
-// AND exports.
+// import footage, generate AI overlays (no API key), export to mp4. Pro 4-pane
+// layout; the timeline IS the Remotion composition that previews AND exports.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { TimelineComposition } from './editor/Composition';
@@ -190,7 +189,7 @@ export default function App() {
     return () => { alive = false; clearInterval(t); };
   }, []);
 
-  // plan / feature gating — mirrors the Premiere extension (Auto-Edit = Studio,
+  // plan / feature gating — mirrors Flimify Studio (Auto-Edit = Studio,
   // Captions = early-access; free is locked). The bridge is the real backstop;
   // this locks the UI and explains why. Default locked until the bridge answers.
   const [features, setFeatures] = useState<PlanFeatures>(FREE_FEATURES);

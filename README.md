@@ -1,15 +1,14 @@
 # Flimify Studio
 
 An **AI-native video editor** — generate motion graphics, drop them on a
-timeline, and export — **without Premiere Pro**. A standalone desktop app (Mac /
-Windows) built on the same Remotion engine as the Flimify Premiere extension,
-so it keeps the killer feature: **AI generation runs on the user's own Claude
-subscription — no API key, no per-render cost.**
+timeline, edit, caption, and export to mp4. A standalone desktop app (**Mac &
+Windows**) that also runs in the **browser**. Its killer feature: **AI generation
+runs on your own Claude subscription — no API key, no per-render cost.**
 
-> Strategic context: the Premiere CEP extension caps the market at Premiere
-> owners (and Adobe is deprecating CEP). Flimify Studio is the standalone play —
-> same engine, much bigger audience — like Submagic / Opus / Captions, but the
-> AI is free because it runs locally on your Claude.
+> A full pro-style NLE (timeline, snapping, undo/redo, split, fades, markers,
+> track mute/solo/lock, captions, auto-edit) with an AI copilot built in — like
+> Submagic / Opus / Captions, but the AI is free because it runs locally on your
+> Claude.
 
 ![Flimify Studio](docs/screenshot.png)
 

@@ -1,5 +1,5 @@
 // Account widget — REAL Google sign-in via the same Supabase project the
-// Premiere extension uses, so the real name + Google profile picture show up.
+// Flimify Studio uses, so the real name + Google profile picture show up.
 // If you're already signed into the extension, Studio picks up that session on
 // load (no re-login). "Sign in with Google" opens the bridge's /connect OAuth
 // page in the browser, then polls until signed in.

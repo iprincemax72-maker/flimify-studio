@@ -1,4 +1,4 @@
-// Editor-friendly prompt library — copied 1:1 from the Premiere extension's
+// Editor-friendly prompt library — copied 1:1 from Flimify Studio's
 // SUGGESTIONS array (kept in sync). Powers the empty-state suggestion chips and
 // ghost autocomplete. Each entry: [label, prompt, category].
 

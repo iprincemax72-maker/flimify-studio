@@ -1,4 +1,4 @@
-// Interactive timeline (Premiere-style): ruler, video tracks (V-higher on top),
+// Interactive timeline (pro-editor-style): ruler, video tracks (V-higher on top),
 // a divider, then audio tracks (A1, A2…), clip blocks, and a playhead synced to
 // the Player. Click empty space to seek; click a clip to select; drag body to
 // move; edge-drag to trim. RIGHT-CLICK a track header → add/remove tracks.
@@ -120,7 +120,7 @@ export const TimelineStrip: React.FC<{
 
   // Wheel over the timeline (native non-passive so we can preventDefault):
   //   • Alt + wheel  → zoom in/out, anchored at the cursor
-  //   • Shift + wheel → pan horizontally like Premiere (scroll up = left, down = right)
+  //   • Shift + wheel → pan horizontally like a pro editor (scroll up = left, down = right)
   //   • plain wheel   → default (vertical track scroll)
   useEffect(() => {
     const el = wrapRef.current;
@@ -220,7 +220,7 @@ export const TimelineStrip: React.FC<{
   }, [menu]);
 
   // Grab anywhere on the timeline/ruler to move the playhead, and keep dragging
-  // to scrub — like Premiere. (Clicking a clip selects it; clicking a label is
+  // to scrub — like a pro editor. (Clicking a clip selects it; clicking a label is
   // handled separately — both stopPropagation.)
   const seekFromEvent = (e: React.MouseEvent) => {
     const el = wrapRef.current;

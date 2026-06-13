@@ -1,5 +1,5 @@
 :root {
-  /* base surfaces — warm, matched 1:1 to the Premiere extension */
+  /* base surfaces — warm, matched 1:1 to Flimify Studio */
   --bg: #0d0d10;
   --bg-base: #0d0d10;
   --panel: #15151a;
@@ -143,7 +143,7 @@ body { background: transparent; color: var(--text); overflow: hidden; overscroll
 .panel { background: color-mix(in srgb, var(--panel) 40%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); display: flex; flex-direction: column; min-height: 0; }
 .panel.flimify { border: none; }
 
-/* ── draggable panel splitters (Premiere-style resize) ── */
+/* ── draggable panel splitters (pro-editor-style resize) ── */
 .splitter-v { cursor: col-resize; display: flex; align-items: center; justify-content: center; background: var(--panel); position: relative; z-index: 6; }
 .splitter-v::before { content: ''; width: 1px; height: 100%; background: var(--line); transition: background .12s, width .12s; }
 .splitter-v:hover::before { width: 3px; background: var(--accent); }
@@ -269,7 +269,7 @@ body.scrubbing, body.scrubbing * { cursor: none !important; user-select: none !i
 .fp-hero-search input { flex: 1; border: none; background: transparent; color: var(--text); font: inherit; font-size: 13px; padding: 9px 0; outline: none; }
 .fp-suggtoggle { margin: 10px auto 0; display: block; border: 1px solid var(--line); background: rgba(255,255,255,.025); color: var(--dim); font: inherit; font-size: 11px; font-weight: 500; padding: 4px 12px; border-radius: 99px; cursor: pointer; }
 .fp-suggtoggle:hover { color: var(--text); border-color: var(--border-strong); }
-/* category filter bar — WRAPS into rows + centered (matches the Premiere extension) */
+/* category filter bar — WRAPS into rows + centered (matches Flimify Studio) */
 .fp-chipnav { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; padding: 6px 12px 12px; max-width: 760px; margin: 0 auto; flex: 0 0 auto; }
 .fp-chipnav::-webkit-scrollbar { height: 0; }
 .fp-navpill { white-space: nowrap; flex: 0 0 auto; }

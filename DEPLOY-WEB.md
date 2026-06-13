@@ -1,8 +1,27 @@
-# Flimify Studio — deploy as a website (flimify.com → editor)
+# Flimify Studio — deploy as a website (flimify.com)
 
-The editor already runs in a browser. The frontend now talks to its backend at
-the **same origin** (`src/api.ts`), so the exact same build works behind any host
-(verified serving on a non-localhost port). What's left is **where to run the
+The bridge now serves a **complete website**, not just the editor:
+
+| URL | Serves |
+|-----|--------|
+| `/` | **Landing + download page** (`public/landing.html`) — hero, feature cards, OS-detected "Download for Mac/Windows", and "Open in browser". |
+| `/app` | The **web editor** (the full app — same `dist/`). |
+| `/download/mac` | Newest `.dmg` from `downloads/` (streamed as an attachment). |
+| `/download/win` | Newest `.exe` from `downloads/`. |
+
+So a visitor hits `flimify.com`, sees the product + can **download the Mac/Windows
+app OR open the editor in their browser** — all from one deploy.
+
+**Getting the installers onto the site:** build them (`npm run dist:mac` /
+`npm run dist:win`, or both on this Mac with `npx electron-builder --mac --win`),
+then drop the `.dmg` + `.exe` into a **`downloads/`** folder next to the bridge
+(override the path with `FLIMIFY_DOWNLOADS_DIR`). The bridge serves the newest of
+each automatically — no code change to ship a new build. (Big files: for real
+traffic, host the installers on a CDN / object storage and point the two
+`/download/*` links there instead.)
+
+The frontend talks to its backend at the **same origin** (`src/api.ts`), so the
+exact same build works behind any host. What's left is **where to run the
 backend** and **how to point flimify.com at it**.
 
 > **The website IS the desktop app — same `dist/`.** Every editor feature ships in

@@ -1,8 +1,12 @@
 # Flimify Studio — project notes (read this first)
 
-Standalone AI-native video editor (Premiere-like layout) that is a **1:1 port of
-the user's Premiere CEP extension** (`~/All Claude Work/claude-extension-premiere-pro-2026`).
-Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939/app).
+Standalone AI-native video editor (pro-NLE layout) — its **own product**. Runs
+**desktop** (Electron, Mac + Windows) and **web** (`npm run web` →
+http://localhost:3939/app). It shares some backend infrastructure (the same
+Supabase auth project + the Remotion render project at `~/PremiereClaude/remotion-intro`)
+with the user's other tooling, but Flimify Studio is independent — keep it
+branded as its OWN product everywhere (UI, README, website, comments), never as
+a plugin or extension of another app.
 
 ## Hard rules / facts to REMEMBER
 - **No API key, ever.** Generation runs on the user's **own local Claude CLI**
@@ -11,8 +15,9 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
   - Account management page = **`https://www.flimify.com/account.html`**
     (NOT `/account`, NOT `/login` — those 404).
   - Site root = `https://www.flimify.com`. Pricing = `/#pricing`.
-- The whole app should match the extension 1:1 (look + features). When in doubt,
-  go read the extension's `extension/com.claudebridge.panel/index.html`.
+- Flimify Studio is its own product — design + features stand on their own. It
+  happens to share backend infrastructure with the user's other tooling, but it
+  is NOT a plugin/extension of any other app.
 
 ## Architecture
 - Frontend: Vite + React + TS + @remotion/player. The timeline IS a Remotion
@@ -29,7 +34,7 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
   nodejs`), `.exe`/`.cmd` resolution, and **`spawnClaude` / `spawnRemotion`** —
   on Windows `claude`/`npx` are `.cmd` shims `spawn()` can't exec (and a shell
   mangles claude's multi-KB system prompt), so we run the CLI's JS entry with
-  `process.execPath` (ported from the Premiere extension's `resolveClaude`).
+  `process.execPath` (ported from the other tooling's `resolveClaude`).
 - **Build installers:** `npm run dist:mac` (dmg) / `npm run dist:win` (NSIS x64,
   `win.target` pins `arch:["x64"]`). electron-builder builds the **Windows
   installer on macOS too** (verified → `release/Flimify Studio Setup <v>.exe`,
@@ -57,7 +62,7 @@ Runs **desktop** (Electron) and **web** (`npm run web` → http://localhost:3939
   web build (localhost:3939/app).
 
 ## Account / sign-in (REAL Google via Supabase — don't break this)
-- Studio reuses the **same Supabase project as the Premiere extension**:
+- Studio reuses the **same Supabase project as the other tooling**:
   - URL `https://hwsyaqmkwitxprtnrzkj.supabase.co`, anon/publishable key
     `sb_publishable_k7tsIqZia0WXf4eGQwcY2w_jFjAkDEK` (public, safe to embed).
   - Owner emails: `iprincemax72@gmail.com`, `anshdhakad9@gmail.com` (→ owner, ∞).
