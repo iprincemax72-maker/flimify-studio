@@ -81,7 +81,7 @@ a plugin or extension of another app.
   are `owner` → `plan: 'studio'`, `unlimited: true` (∞ renders), and **every**
   feature unlocked (Auto-Edit, Captions, engine switch, all versions).
 - **Every other account** — signed in or not, whatever its Supabase plan — is
-  `plan: 'free'`: `unlimited: false`, render limit 5, and features LOCKED
+  `plan: 'free'`: `unlimited: false`, render limit 10, and features LOCKED
   (Auto-Edit/Captions show 🔒 + upsell). NO account other than the two owners is
   ever elevated; there is **no `my_usage`/Supabase-plan path that grants access**
   (`resolvePlan` is a pure owner-vs-free check). Don't add infinite renders for

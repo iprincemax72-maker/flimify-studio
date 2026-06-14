@@ -887,7 +887,7 @@ async function resolvePlan() {
 async function authStatus() {
   adoptNewSigninIfAny();   // pick up a freshly-chosen account before reporting
   const s = loadSession();
-  const base = { enabled: true, signedIn: false, owner: false, unlimited: false, plan: 'free', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 5, site: SITE_URL, dashboard: DASHBOARD_URL, features: featuresFor('free', false) };
+  const base = { enabled: true, signedIn: false, owner: false, unlimited: false, plan: 'free', name: '', email: '', avatar: '', renders_used: 0, renders_limit: 10, site: SITE_URL, dashboard: DASHBOARD_URL, features: featuresFor('free', false) };
   if (!s || !s.access_token) return base;
   const token = await freshToken();
   if (!token) return base;
@@ -901,7 +901,7 @@ async function authStatus() {
     avatar: meta.avatar_url || meta.picture || '',
     owner, unlimited: owner,                      // ONLY owners get unlimited (∞) — everyone else is metered free
     plan, features,
-    renders_used: 0, renders_limit: owner ? 999999 : 5,
+    renders_used: 0, renders_limit: owner ? 999999 : 10,
     site: SITE_URL, dashboard: DASHBOARD_URL,
   };
 }
