@@ -1,0 +1,13 @@
+.git
+node_modules
+**/node_modules
+dist
+web-studio
+release
+downloads
+*.dmg
+*.exe
+*.zip
+.DS_Store
+**/.DS_Store
+server/render-project/.hf

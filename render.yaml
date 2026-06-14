@@ -1,0 +1,19 @@
+# Render Blueprint — one-click deploy of the Flimify render backend.
+# Render.com → New → Blueprint → connect the flimify-studio repo → it reads this.
+# (Railway/Fly work too — they just build the Dockerfile; see DEPLOY-RENDER.md.)
+services:
+  - type: web
+    name: flimify-render
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Rendering = chromium + ffmpeg + Remotion → memory-heavy. 512MB OOMs.
+    # 'standard' = 2GB. Bump to 'pro' (4GB) for long/large exports.
+    plan: standard
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Set this in the Render dashboard (it's a secret, not committed).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production

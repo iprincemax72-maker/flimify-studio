@@ -16,7 +16,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
 
-const PORT = Number(process.env.FLIMIFY_STUDIO_PORT) || 3939;
+const PORT = Number(process.env.FLIMIFY_STUDIO_PORT || process.env.PORT) || 3939;
+// Desktop/local: bind loopback only (secure). Hosted render backend: set
+// FLIMIFY_BIND_HOST=0.0.0.0 so the platform's router can reach it.
+const BIND_HOST = process.env.FLIMIFY_BIND_HOST || '127.0.0.1';
 const HOME = os.homedir();
 const STUDIO_DIR = process.env.FLIMIFY_STUDIO_DIR || path.join(HOME, 'FlimifyStudio');
 const MEDIA_DIR = path.join(STUDIO_DIR, 'media');
@@ -1066,10 +1069,10 @@ server.on('error', (err) => {
     _listenTries++;
     log('port ' + PORT + ' busy — evicting squatter (try ' + _listenTries + ')');
     try { require('child_process').execSync('lsof -ti tcp:' + PORT + ' | xargs kill -9', { stdio: 'ignore' }); } catch {}
-    setTimeout(() => { try { server.listen(PORT, '127.0.0.1'); } catch {} }, 500);
+    setTimeout(() => { try { server.listen(PORT, BIND_HOST); } catch {} }, 500);
   } else {
     log('listen error', err && err.message);
   }
 });
-server.listen(PORT, '127.0.0.1', () => log(`listening on http://localhost:${PORT}  (render project: ${RENDER_PROJECT})`));
+server.listen(PORT, BIND_HOST, () => log(`listening on ${BIND_HOST}:${PORT}  (render project: ${RENDER_PROJECT})`));
 process.on('uncaughtException', (e) => log('uncaught', e && e.message));
