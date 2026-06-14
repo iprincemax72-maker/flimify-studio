@@ -511,25 +511,42 @@ async function planQuestions(message) {
 }
 
 // ── export: timeline state → Remotion render → mp4 ──────────────────────────
-function exportTimeline(state, name) {
+function exportTimeline(state, name, reqId) {
   return new Promise((resolve) => {
     const out = path.join(RENDER_DIR, (name || 'export_' + Date.now().toString(36)).replace(/[^\w.-]/g, '_') + '.mp4');
     const propsFile = path.join(WORK_DIR, 'export_props_' + Date.now().toString(36) + '.json');
     fs.writeFileSync(propsFile, JSON.stringify({ state }));
+    const emit = (text, pct) => { if (reqId) pushProgress(reqId, text, pct); };
+    emit('Preparing export…', 4);
     // Renders the bundled studio export composition (see render/ project files
-    // installed into the render project's src/_studio).
+    // installed into the render project's src/_studio). No --log=error: we want
+    // Remotion's frame progress on stdout/stderr so we can report a real %.
     const entry = 'src/_studio/index.ts';
     const args = ['remotion', 'render', entry, 'StudioTimeline', out,
-      '--props=' + propsFile, '--codec=h264', '--mute', '--hardware-acceleration=if-possible', '--log=error'];
+      '--props=' + propsFile, '--codec=h264', '--mute', '--hardware-acceleration=if-possible'];
     let proc;
     try { proc = spawnRemotion(args, { cwd: RENDER_PROJECT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return resolve({ ok: false, error: e.message }); }
     let err = '';
-    proc.stderr.on('data', (c) => { err += c.toString(); });
+    const onChunk = (c) => {
+      const s = c.toString(); err += s; if (err.length > 8000) err = err.slice(-8000);
+      // Remotion prints frame progress like "45/120"; grab the latest pair.
+      let m, last; const re = /(\d+)\s*\/\s*(\d+)/g;
+      while ((m = re.exec(s))) last = m;
+      if (last && +last[2] > 0) { const p = Math.min(99, Math.round((+last[1] / +last[2]) * 100)); emit('Rendering ' + p + '%', 6 + Math.round(p * 0.9)); }
+      else if (/bundl/i.test(s)) emit('Bundling…', 6);
+      else if (/stitch|encod|mux/i.test(s)) emit('Encoding video…', 97);
+    };
+    proc.stdout.on('data', onChunk);
+    proc.stderr.on('data', onChunk);
     proc.on('close', (code) => {
       try { fs.unlinkSync(propsFile); } catch {}
-      if (code === 0 && fs.existsSync(out)) { log('exported', out); resolve({ ok: true, path: out }); }
-      else resolve({ ok: false, error: 'render failed: ' + err.slice(-400) });
+      if (code === 0 && fs.existsSync(out)) {
+        const id = register(out, name || 'flimify-export');   // serve it over HTTP for the browser download
+        emit('Done', 100);
+        log('exported', out);
+        resolve({ ok: true, path: out, id, name: path.basename(out) });
+      } else resolve({ ok: false, error: 'render failed: ' + err.slice(-400) });
     });
     proc.on('error', (e) => resolve({ ok: false, error: e.message }));
   });
@@ -1027,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && u === '/export') {
     const body = await readBody(req);
     if (!body.state) return sendJson(res, 400, { error: 'no timeline' });
-    const r = await exportTimeline(body.state, body.name);
+    const r = await exportTimeline(body.state, body.name, body.reqId);
     return sendJson(res, r.ok ? 200 : 500, r);
   }
   if (req.method === 'POST' && u === '/autoedit/analyze') {

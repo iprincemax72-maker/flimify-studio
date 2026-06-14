@@ -163,9 +163,8 @@ export function onProgress(reqId: string, cb: (text: string) => void): () => voi
 
 export const newReqId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-export async function exportTimeline(state: EditorState, name: string): Promise<string> {
-  const { path } = await post<{ path: string }>('/export', { state, name });
-  return path;
+export async function exportTimeline(state: EditorState, name: string, reqId?: string): Promise<{ id: string; name: string; path: string }> {
+  return post<{ id: string; name: string; path: string }>('/export', { state, name, reqId });
 }
 
 export async function expandPrompt(prompt: string, level: 'light' | 'medium' | 'heavy'): Promise<string> {

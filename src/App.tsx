@@ -6,14 +6,16 @@ import { Player, type PlayerRef } from '@remotion/player';
 import { TimelineComposition } from './editor/Composition';
 import { TimelineStrip } from './editor/TimelineStrip';
 import { FlimifyPanel } from './panels/FlimifyPanel';
-import type { Clip, ClipTransform, EditorState, Track, TrackType } from './editor/types';
+import type { Clip, ClipTransform, EditorState, Keyframes, Track, TrackType } from './editor/types';
 import { MAX_TRACKS, DEFAULT_TRANSFORM, relabelTracks } from './editor/types';
+import { applyKf, type KfMutation } from './editor/keyframes';
 import { EffectControls } from './panels/EffectControls';
-import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, authStatus, FREE_FEATURES, type BridgeClip, type PlanFeatures } from './api';
+import { health, importPath, uploadVideo, exportTimeline, caption, deleteMedia, toTimelineClip, authStatus, FREE_FEATURES, newReqId, onProgress, BRIDGE, type BridgeClip, type PlanFeatures } from './api';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { CaptionsModal } from './panels/CaptionsModal';
 import { AutoEditModal } from './panels/AutoEditModal';
+import { MarkersPanel } from './panels/MarkersPanel';
 import { Account } from './panels/Account';
 import type { CaptionOptions, AeApplied } from './api';
 import { loadSettings, saveSettings, applySettings, aspectDims, ACCENT_PALETTES, SETTINGS_DEFAULTS, type Settings } from './settings';
@@ -85,6 +87,7 @@ export default function App() {
   const [loop, setLoop] = useState(false);
   const [grid, setGrid] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [markersOpen, setMarkersOpen] = useState(false);
   const playerRef = useRef<PlayerRef>(null);
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
@@ -130,6 +133,20 @@ export default function App() {
   const updateSelectedFade = (patch: { fadeIn?: number; fadeOut?: number }) => {
     if (!selected) return;
     updateClip(selected.trackId, selected.clip.id, patch as Partial<Clip>);
+  };
+  // colour grade / look / blend / flip — patch arbitrary fields on the selected clip
+  const updateSelectedClip = (patch: Partial<Clip>) => {
+    if (!selected) return;
+    updateClip(selected.trackId, selected.clip.id, patch);
+  };
+  // add / update / remove / clear a keyframe on the selected clip. Undo checkpoints
+  // come from EffectControls' onBeforeEdit (one per gesture), not from here — so a
+  // scrub-write doesn't spam history. updateClip captures the new map into state
+  // (→ undo / autosave / save-load all free); `keyframes: undefined` ⇒ static again.
+  const updateSelectedKeyframe = (m: KfMutation) => {
+    if (!selected) return;
+    const cur = (selected.clip as { keyframes?: Keyframes }).keyframes;
+    updateClip(selected.trackId, selected.clip.id, { keyframes: applyKf(cur, m) } as Partial<Clip>);
   };
 
   // persist panel sizes
@@ -402,6 +419,15 @@ export default function App() {
     setState((s) => ({ ...s, markers: [...(s.markers || []).filter((m) => m.frame !== f), { id: 'mk' + Date.now().toString(36), frame: f }].sort((a, b) => a.frame - b.frame) }));
   };
   const clearMarkers = () => { if (!(stateRef.current.markers || []).length) return; checkpoint(); setState((s) => ({ ...s, markers: [] })); };
+  // rename a marker's label (one undo step per commit; '' clears the label)
+  const renameMarker = (id: string, label: string) => {
+    checkpoint();
+    setState((s) => ({ ...s, markers: (s.markers || []).map((m) => (m.id === id ? { ...m, label: label || undefined } : m)) }));
+  };
+  const deleteMarker = (id: string) => {
+    checkpoint();
+    setState((s) => ({ ...s, markers: (s.markers || []).filter((m) => m.id !== id) }));
+  };
 
   // ── Playhead navigation: frame step, Home/End, jump to nearest edit point ──
   const stepFrame = (dir: number, big: boolean) => seekTo(frameRef.current + dir * (big ? stateRef.current.fps : 1));
@@ -545,6 +571,24 @@ export default function App() {
     const at = baseV ? baseV.clips.reduce((m, c) => Math.max(m, c.from + c.durationInFrames), 0) : 0;
     placeMediaOnTimeline(clip, baseV ? baseV.id : null, at);
   };
+  // create a user text/title clip at the playhead on the top video track
+  const addTextClip = () => {
+    const top = [...stateRef.current.tracks].reverse().find((t) => t.type === 'video');
+    if (!top) return;
+    const id = 'text_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const clip: Clip = { id, kind: 'title', name: 'Text', text: 'Your text', from: Math.round(frameRef.current), durationInFrames: 90 };
+    addClip(top.id, clip);
+    setSelectedId(id);
+  };
+  // create a shape / background clip at the playhead on the top video track
+  const addShapeClip = () => {
+    const top = [...stateRef.current.tracks].reverse().find((t) => t.type === 'video');
+    if (!top) return;
+    const id = 'shape_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const clip: Clip = { id, kind: 'shape', name: 'Shape', shape: 'rect', fill: '#d97757', from: Math.round(frameRef.current), durationInFrames: 90 };
+    addClip(top.id, clip);
+    setSelectedId(id);
+  };
 
   const importByPath = async (p: string) => {
     setStatus('Importing…');
@@ -665,20 +709,41 @@ export default function App() {
 
   // ── export ──
   const [exporting, setExporting] = useState(false);
+  const [exportProg, setExportProg] = useState<{ text: string; pct: number } | null>(null);
   const onExport = async () => {
     if (!hasClips || exporting) return;
     setExporting(true);
     setStatus('Exporting…');
+    const reqId = newReqId();
+    setExportProg({ text: 'Starting…', pct: 2 });
+    // live progress from the bridge's Remotion render
+    const stopProg = onProgress(reqId, (text) => {
+      const m = /(\d+)\s*%/.exec(text);
+      setExportProg({ text, pct: m ? +m[1] : (/done/i.test(text) ? 100 : 0) });
+    });
     try {
-      const out = await exportTimeline(state, 'flimify-export');
-      setStatus('Exported → ' + out);
-      toast('Exported → ' + out.split('/').pop());
-      window.flimify?.revealFile?.(out);
+      const { id, name, path: outPath } = await exportTimeline(state, 'flimify-export', reqId);
+      // fetch the rendered file from the bridge → trigger a real browser download
+      // (works on the web AND desktop; the old reveal-in-Finder only worked on desktop).
+      setExportProg({ text: 'Downloading…', pct: 100 });
+      const res = await fetch(`${BRIDGE}/media/${id}`);
+      if (!res.ok) throw new Error('could not fetch the exported file');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name || 'flimify-export.mp4';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 15000);
+      window.flimify?.revealFile?.(outPath);   // desktop bonus: also reveal in Finder
+      setStatus('Exported — downloaded ' + (name || 'flimify-export.mp4'));
+      toast('Exported — downloading ' + (name || 'flimify-export.mp4'));
     } catch (e) {
       setStatus('Export failed: ' + (e as Error).message);
       toast('Export failed: ' + (e as Error).message, true);
     } finally {
+      stopProg();
       setExporting(false);
+      setExportProg(null);
     }
   };
 
@@ -735,7 +800,7 @@ export default function App() {
     if (!clip) { toast('Import footage first.', true); setCaptionsOpen(false); return; }
     setCaptioning(true);
     try {
-      const cap = await caption(clip.id, style, wordsPerLine, options);
+      const cap = await caption(clip.id.split('@')[0], style, wordsPerLine, options);
       addHistory(cap, 'caption');
       addClip(overlayTrackId(), toTimelineClip(cap, clip.from));
       toast('Captions added to ' + overlayLabel() + '.');
@@ -877,10 +942,12 @@ export default function App() {
                 ))}
               </div>
               <button className="bin-import" onClick={onImport}>+ Import video</button>
+              <button className="bin-import" onClick={addTextClip}>+ Text</button>
+              <button className="bin-import" onClick={addShapeClip}>+ Shape</button>
             </>
           ) : (
             <div className="fx-scroll">
-              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} onAudio={updateSelectedAudio} onFade={updateSelectedFade} />
+              <EffectControls clip={selected?.clip ?? null} onChange={updateSelectedTransform} onAudio={updateSelectedAudio} onFade={updateSelectedFade} onClip={updateSelectedClip} currentFrame={frame} onKeyframe={updateSelectedKeyframe} onSeek={seek} onBeforeEdit={checkpoint} />
             </div>
           )}
         </aside>
@@ -919,6 +986,7 @@ export default function App() {
               <button className={'tbtn' + (loop ? ' on' : '')} title="Loop playback" onClick={() => setLoop((v) => !v)}>↻</button>
               <button className={'tbtn' + (grid ? ' on' : '')} title="Grid + safe margins" onClick={() => setGrid((v) => !v)}>#</button>
               <button className="tbtn" title="Fullscreen preview" onClick={toggleFullscreen}>⛶</button>
+              <button className={'tbtn' + (markersOpen ? ' on' : '')} title="Markers list" aria-label="Markers" onClick={() => setMarkersOpen((v) => !v)}>⚑{(state.markers?.length ?? 0) > 0 ? <span className="tbtn-count">{state.markers!.length}</span> : null}</button>
               <span className="aspect-presets" title="Composition aspect ratio">
                 <button onClick={() => setAspectDims(1920, 1080)}>16:9</button>
                 <button onClick={() => setAspectDims(1080, 1920)}>9:16</button>
@@ -983,6 +1051,9 @@ export default function App() {
           features={features}
         />
       )}
+      {markersOpen && (
+        <MarkersPanel markers={state.markers || []} fps={state.fps} fmt={fmt} onClose={() => setMarkersOpen(false)} onJump={(f) => seekTo(f)} onAdd={addMarker} onRename={renameMarker} onDelete={deleteMarker} onClear={clearMarkers} />
+      )}
       {showShortcuts && (
         <div className="shortcuts-scrim" onClick={() => setShowShortcuts(false)}>
           <div className="shortcuts-modal" onClick={(e) => e.stopPropagation()}>
@@ -1015,12 +1086,22 @@ export default function App() {
       )}
       {autoEditOpen && footageClip() && (
         <AutoEditModal
-          clipId={footageClip()!.id}
+          clipId={footageClip()!.id.split('@')[0]}
           clipFrom={footageClip()!.from}
           engine={settings.engine}
           onClose={() => setAutoEditOpen(false)}
           onApply={applyAutoEdit}
         />
+      )}
+      {exportProg && (
+        <div className="export-prog" role="status" aria-live="polite">
+          <div className="export-prog-row">
+            <span className="export-prog-spin" />
+            <span className="export-prog-text">Exporting · {exportProg.text}</span>
+            <span className="export-prog-pct">{exportProg.pct}%</span>
+          </div>
+          <div className="export-prog-bar"><i style={{ width: Math.max(3, exportProg.pct) + '%' }} /></div>
+        </div>
       )}
       <FeedbackHost />
     </div>
