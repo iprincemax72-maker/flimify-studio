@@ -883,6 +883,9 @@ body.scrubbing-ph, body.scrubbing-ph * { cursor: col-resize !important; user-sel
 @keyframes expSpin { to { transform: rotate(360deg); } }
 .export-prog-bar { margin-top: 9px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
 .export-prog-bar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, rgba(var(--accent-rgb),.7), rgb(var(--accent-rgb))); transition: width .3s ease; }
+/* indeterminate: a stripe slides across while we don't have a real % yet */
+.export-prog-bar.indet i { width: 38%; transition: none; animation: expSlide 1.05s ease-in-out infinite; }
+@keyframes expSlide { 0% { margin-left: -42%; } 100% { margin-left: 100%; } }
 .fx-select { width: 100%; font-size: 12px; padding: 5px 8px; border-radius: 7px; cursor: pointer;
   color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.12); text-transform: capitalize; }

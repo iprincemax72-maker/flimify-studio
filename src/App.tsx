@@ -1100,7 +1100,7 @@ export default function App() {
             <span className="export-prog-text">Exporting · {exportProg.text}</span>
             <span className="export-prog-pct">{exportProg.pct}%</span>
           </div>
-          <div className="export-prog-bar"><i style={{ width: Math.max(3, exportProg.pct) + '%' }} /></div>
+          <div className={'export-prog-bar' + (exportProg.pct > 1 ? '' : ' indet')}><i style={exportProg.pct > 1 ? { width: exportProg.pct + '%' } : undefined} /></div>
         </div>
       )}
       <FeedbackHost />
